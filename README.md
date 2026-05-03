@@ -1,60 +1,47 @@
-# Antigravity Alignment
+# Interactive Form Planner for Antigravity
 
-Pre-execution alignment panel for AI agents in the Antigravity IDE.
+Pre-execution alignment panel for AI agents in the Antigravity IDE. 
 
-## What It Does
+Triggers an interactive planning form when agent intent is ambiguous, *before* any code/file is written or changes, reducing token waste and aligning agent intent upfront.
 
-Before writing or modifying any file, the agent submits a form to confirm intent, surface better approaches, and get explicit approval. The form appears in the sidebar panel.
+## Demo
 
-## When the Agent Submits a Form
+<video src="https://github.com/Venturi-exe/antigravity-alignment/raw/main/assets/Demo.mp4" controls="controls" muted="muted" style="max-width: 100%;"></video>
 
-- A new feature or page is being built
-- Any existing file, component, style, or behavior is being modified
-- The task is ambiguous or missing required detail
-- The agent identifies a better implementation than what was asked
-- A change has side effects on other parts of the project
-- Multiple valid approaches exist and the choice affects structure or output
+## Customize Layout
 
-## When No Form Appears
+You can drag the form panel and place it wherever it fits your workflow best (e.g., right below the agent chat).
 
-The agent proceeds immediately when all of the following are true:
-- The task is fully specified with no missing information
-- No ambiguity exists about the intended output
-- No better implementation approach exists worth surfacing
-- No side effects on other parts of the project
+<video src="https://github.com/Venturi-exe/antigravity-alignment/raw/main/assets/After-Download-Customize-layout.mp4" controls="controls" muted="muted" style="max-width: 100%;"></video>
 
 ## Installation
 
-1. Download the `.vsix` file from Releases
-2. In Antigravity/VS Code: Extensions > ... > Install from VSIX
-3. Add the MCP server to your `mcp_config.json`:
+### Primary Method: Open VSX (Recommended)
+Because this extension is published to Open VSX, it is fully integrated into Antigravity:
+1. Open the **Extensions** sidebar in Antigravity (`Ctrl+Shift+X`).
+2. Search for `Interactive Form Planner` or `VNTRCORP.antigravity-alignment`.
+3. Click **Install**.
 
-```json
-{
-  "mcpServers": {
-    "antigravity-alignment": {
-      "command": "node",
-      "args": ["<path-to-extension>/out/mcp-server/index.js"]
-    }
-  }
-}
-```
+The extension will automatically configure your agent and MCP server on first launch!
 
-## Field Types
+### Secondary Method: Manual GitHub Release
+1. Download the latest `.vsix` from the GitHub Releases page.
+2. In Antigravity: Extensions > `...` > **Install from VSIX**.
+
+## How It Works
+
+When installed, this extension automatically injects an `Alignment Rule` into your `GEMINI.md` file and registers the `antigravity-alignment` MCP server. 
+
+The agent proceeds immediately without a form if the task is unambiguous. However, the agent will submit a form to the sidebar before modifying code when:
+- A new feature or page is being built
+- The task is ambiguous or missing required detail
+- The agent identifies a better implementation than what was asked
+- Multiple valid approaches exist and the choice affects structure or output
+
+## Field Types & Dismiss
 
 - **single-choice**: Radio group (all include "Other - describe below")
 - **multi-choice**: Checkbox group (all include "Other - describe below")
 - **free-text**: Text input or textarea
 
-## Dismiss
-
-Every form includes a dismiss option. If dismissed, the agent proceeds with the original prompt and existing context only.
-
-## Development
-
-```bash
-npm install
-npm run compile
-# Press F5 to launch Extension Development Host
-# Ctrl+Shift+P > "Interactive Forms: Test Alignment"
-```
+Every form includes a **Dismiss** option. If dismissed, the agent proceeds with the original prompt and existing context only.
