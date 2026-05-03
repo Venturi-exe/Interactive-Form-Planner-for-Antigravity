@@ -1,0 +1,276 @@
+/* Antigravity Alignment - Webview Styles */
+/* Uses VS Code CSS variables for native theme integration */
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
+    font-size: var(--vscode-font-size, 13px);
+    color: var(--vscode-foreground);
+    background-color: var(--vscode-sideBar-background, transparent);
+    padding: 12px;
+    line-height: 1.5;
+}
+
+/* Empty state */
+#empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 200px;
+    text-align: center;
+    opacity: 0.6;
+    padding: 24px 16px;
+}
+
+.empty-icon {
+    margin-bottom: 12px;
+    color: var(--vscode-descriptionForeground);
+}
+
+.empty-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--vscode-foreground);
+    margin-bottom: 4px;
+}
+
+.empty-description {
+    font-size: 12px;
+    color: var(--vscode-descriptionForeground);
+    max-width: 220px;
+}
+
+/* Form container */
+#form-content {
+    animation: fadeIn 0.2s ease-out;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* Form header */
+.form-header {
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.2));
+}
+
+.form-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--vscode-foreground);
+    margin-bottom: 4px;
+}
+
+.form-description {
+    font-size: 12px;
+    color: var(--vscode-descriptionForeground);
+}
+
+/* Form fields */
+.form-field {
+    margin-bottom: 14px;
+}
+
+.form-field label {
+    display: block;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--vscode-foreground);
+    margin-bottom: 4px;
+}
+
+.form-field label .required-marker {
+    color: var(--vscode-errorForeground, #f44);
+    margin-left: 2px;
+}
+
+.form-field input[type="text"],
+.form-field textarea {
+    width: 100%;
+    padding: 6px 8px;
+    font-family: inherit;
+    font-size: 13px;
+    color: var(--vscode-input-foreground);
+    background-color: var(--vscode-input-background);
+    border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.3));
+    border-radius: 4px;
+    outline: none;
+    transition: border-color 0.15s ease;
+}
+
+.form-field input[type="text"]:focus,
+.form-field textarea:focus {
+    border-color: var(--vscode-focusBorder);
+}
+
+.form-field textarea {
+    resize: vertical;
+    min-height: 60px;
+}
+
+/* Radio group (single-choice) */
+.radio-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 4px;
+}
+
+.radio-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+}
+
+.radio-item input[type="radio"] {
+    accent-color: var(--vscode-focusBorder);
+    cursor: pointer;
+    width: 14px;
+    height: 14px;
+}
+
+.radio-item span {
+    font-size: 13px;
+    color: var(--vscode-foreground);
+}
+
+/* Checkbox group (multi-choice) */
+.checkbox-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 4px;
+}
+
+.checkbox-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+}
+
+.checkbox-item input[type="checkbox"] {
+    accent-color: var(--vscode-focusBorder);
+    cursor: pointer;
+    width: 14px;
+    height: 14px;
+}
+
+.checkbox-item span {
+    font-size: 13px;
+    color: var(--vscode-foreground);
+}
+
+/* "Other" conditional text input */
+.other-input {
+    width: 100%;
+    margin-top: 6px;
+    padding: 6px 8px;
+    font-family: inherit;
+    font-size: 13px;
+    color: var(--vscode-input-foreground);
+    background-color: var(--vscode-input-background);
+    border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.3));
+    border-radius: 4px;
+    outline: none;
+    transition: border-color 0.15s ease;
+}
+
+.other-input:focus {
+    border-color: var(--vscode-focusBorder);
+}
+
+/* Form actions */
+.form-actions {
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.2));
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+/* Submit button */
+.submit-btn {
+    width: 100%;
+    padding: 8px 16px;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--vscode-button-foreground);
+    background-color: var(--vscode-button-background);
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.15s ease, opacity 0.15s ease;
+}
+
+.submit-btn:hover {
+    background-color: var(--vscode-button-hoverBackground);
+}
+
+.submit-btn:active {
+    opacity: 0.85;
+}
+
+.submit-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Dismiss button */
+.dismiss-btn {
+    width: 100%;
+    padding: 6px 16px;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--vscode-descriptionForeground);
+    background-color: transparent;
+    border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.25));
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.dismiss-btn:hover {
+    background-color: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.1));
+    color: var(--vscode-foreground);
+}
+
+.dismiss-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Validation errors */
+.field-error {
+    font-size: 11px;
+    color: var(--vscode-errorForeground, #f44);
+    margin-top: 3px;
+    display: none;
+}
+
+.field-error.visible {
+    display: block;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+    * {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+    }
+}
