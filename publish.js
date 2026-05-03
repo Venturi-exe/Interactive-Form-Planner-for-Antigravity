@@ -10,14 +10,17 @@ function run(cmd) {
     }
 }
 
+// 0. Build & Package
+run('npm run package');
+
 // 1. GitHub Push
 run('git add .');
-run('git commit -m "Rebrand extension to interactive form planner"');
+run('git commit -m "Update README with demo videos and reprioritize installation instructions"');
 run('git push --force origin main');
 
 // 2. Open VSX Publish
 if (token) {
-    run(`npx ovsx publish antigravity-pre-execution-form-planner-0.1.0.vsix -p ${token}`);
+    run(`npx ovsx publish antigravity-pre-execution-form-planner-0.1.1.vsix -p ${token}`);
 } else {
     console.error("No token provided. Skipping publish.");
 }

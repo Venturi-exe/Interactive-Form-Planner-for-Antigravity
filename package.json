@@ -2,7 +2,7 @@
   "name": "antigravity-pre-execution-form-planner",
   "displayName": "Interactive Form Planner for Antigravity",
   "description": "Triggers an interactive planning form when agent intent is ambiguous, before any code/file is written or changes, reducing token waste and aligning agent intent upfront.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "VNTRCORP",
   "license": "MIT",
   "engines": {
