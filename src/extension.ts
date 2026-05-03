@@ -165,7 +165,7 @@ Do not use the tool if the task is fully specified, unambiguous, has no better a
         }
 
         context.globalState.update("setupComplete", true);
-        vscode.window.showInformationMessage("Antigravity Alignment: Auto-setup complete. MCP server registered and GEMINI.md updated.");
+        vscode.window.showInformationMessage("Interactive Form Planner for Antigravity: Auto-setup complete. MCP server registered and GEMINI.md updated.");
     } catch (error) {
         console.error("Auto-setup failed:", error);
     }
