@@ -1,0 +1,76 @@
+{
+  "name": "antigravity-alignment",
+  "displayName": "Antigravity Alignment",
+  "description": "Pre-execution alignment panel. The agent submits a form before writing or modifying code to confirm intent, surface alternatives, and get approval.",
+  "version": "0.1.0",
+  "publisher": "VNTRCORP",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/VNTRCORP/antigravity-alignment.git"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "keywords": [
+    "antigravity",
+    "mcp",
+    "interactive",
+    "forms",
+    "agent",
+    "ai"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "interactive-forms-container",
+          "title": "Interactive Forms",
+          "icon": "$(symbol-parameter)"
+        }
+      ]
+    },
+    "views": {
+      "interactive-forms-container": [
+        {
+          "type": "webview",
+          "id": "interactiveForms.formView",
+          "name": "Agent Forms"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "interactiveForms.showPanel",
+        "title": "Interactive Forms: Show Panel"
+      },
+      {
+        "command": "interactiveForms.testAlignment",
+        "title": "Interactive Forms: Test Alignment"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "npx @vscode/vsce package --no-dependencies",
+    "lint": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.96.0",
+    "typescript": "^5.7.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.24.0"
+  }
+}
