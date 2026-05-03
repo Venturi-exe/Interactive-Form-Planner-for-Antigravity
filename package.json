@@ -1,7 +1,7 @@
 {
-  "name": "antigravity-alignment",
-  "displayName": "Antigravity Alignment",
-  "description": "Pre-execution alignment panel. The agent submits a form before writing or modifying code to confirm intent, surface alternatives, and get approval.",
+  "name": "antigravity-pre-execution-form-planner",
+  "displayName": "Interactive Form Planner for Antigravity",
+  "description": "Triggers an interactive planning form when agent intent is ambiguous, before any code/file is written or changes, reducing token waste and aligning agent intent upfront.",
   "version": "0.1.0",
   "publisher": "VNTRCORP",
   "license": "MIT",
