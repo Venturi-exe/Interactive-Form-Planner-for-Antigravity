@@ -144,7 +144,7 @@ function runFirstTimeSetup(context: vscode.ExtensionContext): void {
         const alignmentRule = `
 ## Alignment Rule
 
-Before writing or modifying any file, use the \`align_before_edit\` MCP tool when any of the following are true:
+Before writing or modifying any file, OR generating complex text-only output (e.g., blog posts, documentation, structured plans), use the \`align_before_edit\` MCP tool when any of the following are true:
 - A new feature or page is being built
 - An existing file is being changed
 - The task is ambiguous or missing detail
