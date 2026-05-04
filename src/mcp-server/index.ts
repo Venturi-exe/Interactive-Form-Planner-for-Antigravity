@@ -79,7 +79,7 @@ function pollForResponse(requestId: string, timeoutMs: number): Promise<Record<s
 
 server.tool(
     "align_before_edit",
-    "Submit this form before writing or modifying any file when: a new feature or page is being built, an existing file is being changed, the task is ambiguous or missing detail, you have a better approach to suggest, the change has side effects on other parts of the project, or multiple valid approaches exist. Do not call this tool if the task is fully specified, unambiguous, has no better alternative, and has no side effects on other files.",
+    "Submit this form before writing or modifying any file OR generating complex text-only output (e.g., blog posts, documentation, structured plans) when: a new feature or page is being built, an existing file is being changed, the task is ambiguous or missing detail, you have a better approach to suggest, the change has side effects on other parts of the project, or multiple valid approaches exist. Do not call this tool if the task is fully specified, unambiguous, has no better alternative, and has no side effects on other files.",
     {
         title: z.string().describe("What decision needs alignment"),
         description: z.string().optional().describe("Why the agent is asking"),

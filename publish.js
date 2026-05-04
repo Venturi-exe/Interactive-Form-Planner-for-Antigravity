@@ -1,5 +1,7 @@
 const { execSync } = require('child_process');
+const pkg = require('./package.json');
 const token = process.env.OVSX_TOKEN;
+const version = pkg.version;
 
 function run(cmd) {
     console.log(`Running: ${cmd}`);
@@ -15,12 +17,12 @@ run('npm run package');
 
 // 1. GitHub Push
 run('git add .');
-run('git commit -m "Update README with demo videos and reprioritize installation instructions"');
+run('git commit -m "scope expanded to text output"');
 run('git push --force origin main');
 
 // 2. Open VSX Publish
 if (token) {
-    run(`npx ovsx publish antigravity-pre-execution-form-planner-0.1.6.vsix -p ${token}`);
+    run(`npx ovsx publish antigravity-pre-execution-form-planner-${version}.vsix -p ${token}`);
 } else {
     console.error("No token provided. Skipping publish.");
 }
