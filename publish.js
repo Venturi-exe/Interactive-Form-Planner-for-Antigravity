@@ -17,7 +17,7 @@ run('npm run package');
 
 // 1. GitHub Push
 run('git add .');
-run('git commit -m "scope expanded to text output"');
+run(`git commit -m "release: v${version}"`);
 run('git push --force origin main');
 
 // 2. Open VSX Publish
