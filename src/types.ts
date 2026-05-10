@@ -24,12 +24,19 @@ export interface AlignmentFormRequest {
     title: string;
     description?: string;
     fields: AlignmentField[];
+    showExecuteButton?: boolean;
 }
+
+/**
+ * The action the user took on the form.
+ */
+export type FormAction = "submit" | "execute" | "dismiss";
 
 /**
  * The result returned by the FormViewProvider after user interaction.
  */
 export interface FormResult {
+    action: FormAction;
     dismissed: boolean;
     data: Record<string, unknown>;
 }
@@ -39,6 +46,7 @@ export interface FormResult {
  */
 export interface AlignmentFormResponse {
     requestId: string;
+    action: FormAction;
     dismissed: boolean;
     data: Record<string, unknown>;
 }

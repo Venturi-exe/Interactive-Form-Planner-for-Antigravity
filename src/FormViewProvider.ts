@@ -35,10 +35,13 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
             if (!this._pendingResolver) return;
 
             if (message.type === "form_submitted") {
-                this._pendingResolver({ dismissed: false, data: message.data });
+                this._pendingResolver({ action: "submit", dismissed: false, data: message.data });
+                this._pendingResolver = undefined;
+            } else if (message.type === "form_executed") {
+                this._pendingResolver({ action: "execute", dismissed: false, data: message.data });
                 this._pendingResolver = undefined;
             } else if (message.type === "form_dismissed") {
-                this._pendingResolver({ dismissed: true, data: {} });
+                this._pendingResolver({ action: "dismiss", dismissed: true, data: {} });
                 this._pendingResolver = undefined;
             }
         });
@@ -61,6 +64,7 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
                 title: request.title,
                 description: request.description ?? "",
                 fields: request.fields,
+                showExecuteButton: request.showExecuteButton ?? false,
             });
         });
     }

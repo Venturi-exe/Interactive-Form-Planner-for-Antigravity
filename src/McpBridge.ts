@@ -85,6 +85,7 @@ export class McpBridge {
                 // Write response file for the MCP server
                 const response: AlignmentFormResponse = {
                     requestId: request.requestId,
+                    action: result.action,
                     dismissed: result.dismissed,
                     data: result.data,
                 };

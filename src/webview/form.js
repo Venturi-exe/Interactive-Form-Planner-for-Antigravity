@@ -46,7 +46,7 @@
             form.appendChild(createField(field));
         }
 
-        // Actions: Submit + Dismiss
+        // Actions: Submit + optional Execute + Dismiss
         const actions = document.createElement("div");
         actions.className = "form-actions";
 
@@ -56,10 +56,20 @@
         submitBtn.textContent = "Submit";
         actions.appendChild(submitBtn);
 
+        // Execute Plan button (only in deep prompt refining mode)
+        if (schema.showExecuteButton) {
+            const executeBtn = document.createElement("button");
+            executeBtn.type = "button";
+            executeBtn.className = "execute-btn";
+            executeBtn.textContent = "Execute Plan";
+            executeBtn.addEventListener("click", handleExecute);
+            actions.appendChild(executeBtn);
+        }
+
         const dismissBtn = document.createElement("button");
         dismissBtn.type = "button";
         dismissBtn.className = "dismiss-btn";
-        dismissBtn.textContent = "Skip \u2014 proceed with what you already have";
+        dismissBtn.textContent = "Skip - proceed with what you already have";
         dismissBtn.addEventListener("click", handleDismiss);
         actions.appendChild(dismissBtn);
 
@@ -118,7 +128,7 @@
         const group = document.createElement("div");
         group.className = "radio-group";
 
-        const allOptions = (field.options || []).concat(["Other \u2014 describe below"]);
+        const allOptions = (field.options || []).concat(["Other - describe below"]);
 
         for (const option of allOptions) {
             const item = document.createElement("label");
@@ -152,7 +162,7 @@
         // Toggle "Other" input visibility
         group.addEventListener("change", (e) => {
             const selected = e.target;
-            if (selected && selected.value === "Other \u2014 describe below") {
+            if (selected && selected.value === "Other - describe below") {
                 otherInput.style.display = "block";
                 otherInput.focus();
             } else {
@@ -173,7 +183,7 @@
         const group = document.createElement("div");
         group.className = "checkbox-group";
 
-        const allOptions = (field.options || []).concat(["Other \u2014 describe below"]);
+        const allOptions = (field.options || []).concat(["Other - describe below"]);
 
         for (const option of allOptions) {
             const item = document.createElement("label");
@@ -206,7 +216,7 @@
         // Toggle "Other" input visibility
         group.addEventListener("change", () => {
             const otherCheckbox = group.querySelector(
-                'input[value="Other \u2014 describe below"]'
+                'input[value="Other - describe below"]'
             );
             if (otherCheckbox && otherCheckbox.checked) {
                 otherInput.style.display = "block";
@@ -280,7 +290,7 @@
                     const values = Array.from(checked).map((cb) => cb.value);
 
                     // If "Other" is selected, replace it with the text input value
-                    const otherIdx = values.indexOf("Other \u2014 describe below");
+                    const otherIdx = values.indexOf("Other - describe below");
                     if (otherIdx !== -1) {
                         const otherText = form.querySelector('input[name="' + name + '_other"]');
                         if (otherText && otherText.value.trim()) {
@@ -298,7 +308,7 @@
                     let value = checked ? checked.value : "";
 
                     // If "Other" is selected, use the text input value
-                    if (value === "Other \u2014 describe below") {
+                    if (value === "Other - describe below") {
                         const otherText = form.querySelector('input[name="' + name + '_other"]');
                         value = otherText && otherText.value.trim() ? otherText.value.trim() : "";
                     }
@@ -334,6 +344,53 @@
 
         vscode.postMessage({
             type: "form_submitted",
+            requestId: currentRequestId,
+            data: formData,
+        });
+
+        // Return to empty state
+        setTimeout(() => {
+            formContent.style.display = "none";
+            emptyState.style.display = "flex";
+        }, 300);
+    }
+
+    /**
+     * Handles "Execute Plan" button click.
+     * Collects any filled form data and signals the agent to stop planning.
+     */
+    function handleExecute() {
+        const form = document.getElementById("alignment-form");
+        const formData = {};
+
+        if (form) {
+            const fields = form.querySelectorAll("[name]");
+            const processedNames = new Set();
+
+            for (const input of fields) {
+                const name = input.name;
+                if (name.endsWith("_other")) continue;
+                if (processedNames.has(name)) continue;
+                processedNames.add(name);
+
+                if (input.type === "radio") {
+                    const checked = form.querySelector('input[name="' + name + '"]:checked');
+                    formData[name] = checked ? checked.value : "";
+                } else if (input.type === "checkbox") {
+                    const checked = form.querySelectorAll('input[name="' + name + '"]:checked');
+                    formData[name] = Array.from(checked).map((cb) => cb.value);
+                } else {
+                    formData[name] = input.value;
+                }
+            }
+
+            // Disable all buttons
+            const buttons = form.querySelectorAll("button");
+            buttons.forEach((btn) => { btn.disabled = true; });
+        }
+
+        vscode.postMessage({
+            type: "form_executed",
             requestId: currentRequestId,
             data: formData,
         });

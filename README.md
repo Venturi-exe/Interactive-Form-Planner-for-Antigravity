@@ -6,13 +6,13 @@ Triggers an interactive planning form when agent intent is ambiguous, *before* a
 
 ## Demo
 
-![Demo](assets/Demo.gif)
+![Demo](https://raw.githubusercontent.com/Venturi-exe/Interactive-Form-Planner-for-Antigravity/main/assets/Demo.gif)
 
 ## Customize Layout
 
 You can drag the form panel and place it wherever it fits your workflow best (e.g., right below the agent chat).
 
-![Customize Layout](assets/After-Download-Customize-layout.gif)
+![Customize Layout](https://raw.githubusercontent.com/Venturi-exe/Interactive-Form-Planner-for-Antigravity/main/assets/After-Download-Customize-layout.gif)
 
 ## Installation
 
