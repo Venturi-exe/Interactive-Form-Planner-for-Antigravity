@@ -5,6 +5,7 @@ import * as fs from "fs";
 import { FormViewProvider } from "./FormViewProvider.js";
 import { McpBridge } from "./McpBridge.js";
 
+
 let mcpBridge: McpBridge | undefined;
 
 /**
@@ -142,9 +143,18 @@ function runFirstTimeSetup(context: vscode.ExtensionContext): void {
         // 2. Configure GEMINI.md
         const geminiMdPath = path.join(geminiDir, "GEMINI.md");
         const alignmentRule = `
-## Alignment Rule
+## Alignment Rule (Mandatory Usage Policy)
 
-Before writing or modifying any file, OR generating complex text-only output (e.g., blog posts, documentation, structured plans), use the \`align_before_edit\` MCP tool when any of the following are true:
+The \\\`align_before_edit\\\` MCP tool is a near-mandatory step in the response workflow. Default behavior: always use the form.
+
+**Skip conditions (all must apply to skip):**
+- The prompt is fully self-contained with zero ambiguity
+- OR the request is a simple factual lookup or research query with no deliverable to produce
+- OR the task is a trivial single-operation action (e.g., "rename this variable", "fix this typo")
+
+The burden of proof is on the skip condition, not on the trigger condition. If there is even slight ambiguity, the form must be used.
+
+**Standard triggers (use the form when any are true):**
 - A new feature or page is being built
 - An existing file is being changed
 - The task is ambiguous or missing detail
@@ -152,7 +162,27 @@ Before writing or modifying any file, OR generating complex text-only output (e.
 - The change has side effects on other parts of the project
 - Multiple valid approaches exist
 
-Do not use the tool if the task is fully specified, unambiguous, has no better alternative, and has no side effects.
+## Deep Prompt Refining
+
+When a user prompt contains \\\`@trigger deep prompt refining\\\`, enter an iterative planning loop:
+1. Send an \\\`align_before_edit\\\` form with \\\`showExecuteButton: true\\\`.
+2. After each submission, output a brief plan summary in the chat response.
+3. Send a follow-up form to refine further, again with \\\`showExecuteButton: true\\\`.
+4. Repeat until the user clicks **Execute Plan**.
+5. When the response contains \\\`"action": "execute"\\\`, stop planning immediately and proceed to the Planning Receipt step below.
+
+## Planning Receipt
+
+After every \\\`align_before_edit\\\` form submission (both standard submit and Execute Plan), generate a structured Markdown artifact **before writing any code or modifying files**:
+- File name: \\\`planning_receipt_[project-or-task-name].md\\\`
+- Required sections:
+    - **Questions Asked**: History of the alignment questions.
+    - **User Decisions**: The answers provided in the forms.
+    - **Assumptions Made**: Technical or scope assumptions identified.
+    - **Permissions**: List of files and actions explicitly allowed.
+    - **Out of Scope**: Items explicitly excluded.
+    - **Execution Roadmap**: High-level summary of the immediate next steps.
+    - **Approval Timestamp**: The date and time the plan was finalized.
 `;
         
         if (fs.existsSync(geminiMdPath)) {
@@ -170,3 +200,5 @@ Do not use the tool if the task is fully specified, unambiguous, has no better a
         console.error("Auto-setup failed:", error);
     }
 }
+
+

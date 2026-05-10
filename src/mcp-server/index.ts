@@ -84,8 +84,9 @@ server.tool(
         title: z.string().describe("What decision needs alignment"),
         description: z.string().optional().describe("Why the agent is asking"),
         fields: z.array(fieldSchema).max(5).describe("Form fields, 5 maximum"),
+        showExecuteButton: z.boolean().optional().default(false).describe("Show an 'Execute Plan' button. Use only during deep prompt refining loops."),
     },
-    async ({ title, description, fields }) => {
+    async ({ title, description, fields, showExecuteButton }) => {
         const requestId = generateRequestId();
 
         const request = {
@@ -93,6 +94,7 @@ server.tool(
             title,
             description: description ?? "",
             fields,
+            showExecuteButton: showExecuteButton ?? false,
         };
 
         // Write request file for the extension to pick up
@@ -102,6 +104,28 @@ server.tool(
         // Poll for response (5 minute timeout)
         const response = await pollForResponse(requestId, 5 * 60 * 1000);
 
+        const action = (response as any).action ?? "submit";
+
+        if (action === "execute") {
+            return {
+                content: [
+                    {
+                        type: "text" as const,
+                        text: JSON.stringify(
+                            {
+                                action: "execute",
+                                message:
+                                    "User clicked Execute Plan. Stop planning. Generate a planning receipt, then begin implementation.",
+                                data: response.data ?? response,
+                            },
+                            null,
+                            2
+                        ),
+                    },
+                ],
+            };
+        }
+
         if (response.dismissed) {
             return {
                 content: [
@@ -109,6 +133,7 @@ server.tool(
                         type: "text" as const,
                         text: JSON.stringify(
                             {
+                                action: "dismiss",
                                 dismissed: true,
                                 message:
                                     "User chose to skip. Proceed with the original prompt and existing context only. Do not apply assumptions from unanswered fields.",
@@ -125,7 +150,14 @@ server.tool(
             content: [
                 {
                     type: "text" as const,
-                    text: JSON.stringify(response.data ?? response, null, 2),
+                    text: JSON.stringify(
+                        {
+                            action: "submit",
+                            data: response.data ?? response,
+                        },
+                        null,
+                        2
+                    ),
                 },
             ],
         };
