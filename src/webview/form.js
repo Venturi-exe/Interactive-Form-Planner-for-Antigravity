@@ -1,6 +1,6 @@
 // @ts-nocheck
-/* Antigravity Alignment - Webview Script */
-/* Renders alignment forms, handles submit and dismiss. */
+/* Antigravity Planner - Webview Script */
+/* Renders planning forms, handles submit and dismiss. */
 
 (function () {
     const vscode = acquireVsCodeApi();
@@ -38,7 +38,7 @@
 
         // Form element
         const form = document.createElement("form");
-        form.id = "alignment-form";
+        form.id = "planner-form";
         form.addEventListener("submit", handleSubmit);
 
         // Render fields
@@ -360,7 +360,7 @@
      * Collects any filled form data and signals the agent to stop planning.
      */
     function handleExecute() {
-        const form = document.getElementById("alignment-form");
+        const form = document.getElementById("planner-form");
         const formData = {};
 
         if (form) {
