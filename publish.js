@@ -9,7 +9,8 @@ const originalName = pkg.name;
 
 // Add any legacy IDs you want to keep updated here
 const LEGACY_IDS = [
-    "antigravity-pre-execution-form-planner"
+    "antigravity-pre-execution-form-planner",
+    "antigravity-alignment"
 ];
 
 function run(cmd) {
