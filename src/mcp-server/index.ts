@@ -28,7 +28,7 @@ const fieldSchema = z.object({
 });
 
 const server = new McpServer({
-    name: "antigravity-alignment",
+    name: "antigravity-planner",
     version: "0.2.0",
 });
 
@@ -78,7 +78,7 @@ function pollForResponse(requestId: string, timeoutMs: number): Promise<Record<s
 }
 
 server.tool(
-    "align_before_edit",
+    "pre_execution_form_planner",
     "Submit this form before writing or modifying any file OR generating complex text-only output (e.g., blog posts, documentation, structured plans) when: a new feature or page is being built, an existing file is being changed, the task is ambiguous or missing detail, you have a better approach to suggest, the change has side effects on other parts of the project, or multiple valid approaches exist. Do not call this tool if the task is fully specified, unambiguous, has no better alternative, and has no side effects on other files.",
     {
         title: z.string().describe("What decision needs alignment"),
@@ -115,7 +115,7 @@ server.tool(
                             {
                                 action: "execute",
                                 message:
-                                    "User clicked Execute Plan. Stop planning. Generate a planning receipt, then begin implementation.",
+                                    "User clicked Execute Plan. Stop planning. Generate a post planning analysis, then begin implementation.",
                                 data: response.data ?? response,
                             },
                             null,

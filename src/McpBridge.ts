@@ -10,7 +10,7 @@ const REQUESTS_DIR = path.join(IPC_DIR, "requests");
 const RESPONSES_DIR = path.join(IPC_DIR, "responses");
 
 /**
- * Watches the IPC requests directory for alignment form requests from the MCP server.
+ * Watches the IPC requests directory for planning form requests from the MCP server.
  * When a request file appears, renders the form via FormViewProvider and writes
  * the response back to the responses directory for the MCP server to pick up.
  */
@@ -20,17 +20,17 @@ export class McpBridge {
     private _processing = new Set<string>();
 
     constructor(private readonly _formViewProvider: FormViewProvider) {
-        this._outputChannel = vscode.window.createOutputChannel("Alignment");
+        this._outputChannel = vscode.window.createOutputChannel("Planner");
     }
 
     /**
-     * Starts watching for alignment request files.
+     * Starts watching for planning request files.
      */
     public start(): void {
         fs.mkdirSync(REQUESTS_DIR, { recursive: true });
         fs.mkdirSync(RESPONSES_DIR, { recursive: true });
 
-        this._outputChannel.appendLine("Watching for alignment requests...");
+        this._outputChannel.appendLine("Watching for planning requests...");
         this._pollInterval = setInterval(() => this._checkForRequests(), 500);
     }
 
@@ -69,7 +69,7 @@ export class McpBridge {
                 const request: AlignmentFormRequest = JSON.parse(content);
 
                 this._outputChannel.appendLine(
-                    `Alignment request: ${request.requestId} "${request.title}"`
+                    `Planning request: ${request.requestId} "${request.title}"`
                 );
 
                 // Delete the request file now that we have it in memory

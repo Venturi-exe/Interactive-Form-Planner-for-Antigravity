@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import type { AlignmentFormRequest, FormResult } from "./types.js";
 
 /**
- * Provides the sidebar webview panel for rendering alignment forms.
+ * Provides the sidebar webview panel for rendering planning forms.
  * Handles bidirectional messaging between the extension host and the webview.
  */
 export class FormViewProvider implements vscode.WebviewViewProvider {
@@ -92,7 +92,7 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
                    style-src ${webview.cspSource} 'unsafe-inline';
                    script-src 'nonce-${nonce}';">
     <link rel="stylesheet" href="${cssUri}">
-    <title>Alignment</title>
+    <title>Interactive Planner</title>
 </head>
 <body>
     <div id="form-container">
@@ -103,7 +103,7 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
                     <rect x="3" y="3" width="18" height="18" rx="3"/>
                 </svg>
             </div>
-            <p class="empty-title">Waiting for alignment</p>
+            <p class="empty-title">Waiting for input</p>
             <p class="empty-description">The agent will ask before making changes.</p>
         </div>
         <div id="form-content" style="display: none;"></div>

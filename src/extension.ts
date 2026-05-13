@@ -80,7 +80,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
             const result = await formViewProvider.showForm(testRequest);
             if (result.dismissed) {
-                vscode.window.showInformationMessage("Alignment skipped by user.");
+                vscode.window.showInformationMessage("Planning skipped by user.");
             } else {
                 vscode.window.showInformationMessage(
                     `Alignment received: ${JSON.stringify(result.data)}`
@@ -132,8 +132,8 @@ function runFirstTimeSetup(context: vscode.ExtensionContext): void {
 
         const serverPath = path.join(context.extensionPath, "out", "mcp-server", "index.js").replace(/\\/g, "/");
         
-        if (!mcpConfig.mcpServers["antigravity-alignment"]) {
-            mcpConfig.mcpServers["antigravity-alignment"] = {
+        if (!mcpConfig.mcpServers["antigravity-planner"]) {
+            mcpConfig.mcpServers["antigravity-planner"] = {
                 command: "node",
                 args: [serverPath]
             };
@@ -143,9 +143,9 @@ function runFirstTimeSetup(context: vscode.ExtensionContext): void {
         // 2. Configure GEMINI.md
         const geminiMdPath = path.join(geminiDir, "GEMINI.md");
         const alignmentRule = `
-## Alignment Rule (Mandatory Usage Policy)
+## Planning Rule (Mandatory Usage Policy)
 
-The \\\`align_before_edit\\\` MCP tool is a near-mandatory step in the response workflow. Default behavior: always use the form.
+The \\\`pre_execution_form_planner\\\` MCP tool is a near-mandatory step in the response workflow. Default behavior: always use the form.
 
 **Skip conditions (all must apply to skip):**
 - The prompt is fully self-contained with zero ambiguity
@@ -165,16 +165,17 @@ The burden of proof is on the skip condition, not on the trigger condition. If t
 ## Deep Prompt Refining
 
 When a user prompt contains \\\`@trigger deep prompt refining\\\`, enter an iterative planning loop:
-1. Send an \\\`align_before_edit\\\` form with \\\`showExecuteButton: true\\\`.
+1. Send an \\\`pre_execution_form_planner\\\` form with \\\`showExecuteButton: true\\\`.
 2. After each submission, output a brief plan summary in the chat response.
 3. Send a follow-up form to refine further, again with \\\`showExecuteButton: true\\\`.
 4. Repeat until the user clicks **Execute Plan**.
-5. When the response contains \\\`"action": "execute"\\\`, stop planning immediately and proceed to the Planning Receipt step below.
+5. When the response contains \\\`"action": "execute"\\\`, stop planning immediately and proceed to the Post Planning Analysis step below.
 
-## Planning Receipt
+## Post Planning Analysis
 
-After every \\\`align_before_edit\\\` form submission (both standard submit and Execute Plan), generate a structured Markdown artifact **before writing any code or modifying files**:
-- File name: \\\`planning_receipt_[project-or-task-name].md\\\`
+After every \\\`pre_execution_form_planner\\\` form submission (both standard submit and Execute Plan), generate a structured Markdown artifact **before writing any code or modifying files**:
+- File name: \\\`post_planning_analysis_[task-name].md\\\`
+- Storage: \\\`[workspace-root]/post_planning_analysis/\\\`
 - Required sections:
     - **Questions Asked**: History of the alignment questions.
     - **User Decisions**: The answers provided in the forms.
@@ -187,7 +188,7 @@ After every \\\`align_before_edit\\\` form submission (both standard submit and 
         
         if (fs.existsSync(geminiMdPath)) {
             const currentContent = fs.readFileSync(geminiMdPath, "utf-8");
-            if (!currentContent.includes("align_before_edit")) {
+            if (!currentContent.includes("pre_execution_form_planner")) {
                 fs.appendFileSync(geminiMdPath, "\n" + alignmentRule);
             }
         } else {

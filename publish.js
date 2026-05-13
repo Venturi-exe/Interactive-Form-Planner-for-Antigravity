@@ -22,7 +22,7 @@ run('git push --force origin main');
 
 // 2. Open VSX Publish
 if (token) {
-    run(`npx ovsx publish antigravity-pre-execution-form-planner-${version}.vsix -p ${token}`);
+    run(`npx ovsx publish ${pkg.name}-${version}.vsix -p ${token}`);
 } else {
     console.error("No token provided. Skipping publish.");
 }
