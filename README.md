@@ -1,66 +1,108 @@
-# Interactive Form Planner for Antigravity
+# Orbit
 
-Pre-execution planning panel for AI agents in the Antigravity IDE. 
+Orbit : Ultimate planning tool for antigravity.
 
-Triggers an interactive planning form when agent intent is ambiguous, *before* any code/file is written or changes, reducing token waste and aligning agent intent upfront.
+Orbit provides a complete loop alignment mechanism for AI agents in the Antigravity IDE, closing the gap between user intent and agent execution.
 
-## Demo
+## The Dual-Alignment Philosophy
 
-![Demo](https://raw.githubusercontent.com/Venturi-exe/Interactive-Form-Planner-for-Antigravity/main/assets/Demo.gif)
+1. **Orbit Planner**: Aligns user intent with agent understanding *before* any code is written or modified (pre-execution alignment).
+2. **Orbit Cartograph**: Aligns agent outputs, decisions, and actual code changes with user understanding *after* execution is complete (post-execution alignment).
 
-## Customize Layout
+---
 
-You can drag the form panel and place it wherever it fits your workflow best (e.g., right below the agent chat).
+## Features
 
-![Customize Layout](https://raw.githubusercontent.com/Venturi-exe/Interactive-Form-Planner-for-Antigravity/main/assets/After-Download-Customize-layout.gif)
+### 1. Orbit Planner (Pre-Execution)
+When a task is ambiguous or has multiple architectural approaches, the `orbit` MCP server automatically triggers an interactive planning form:
+- Reduces token waste by resolving questions beforehand.
+- Collects structured input (single-choice, multi-choice, and free-text fields).
+- Supports **Deep Prompt Refining** via `@trigger deep prompt refining` to iteratively perfect plans before execution.
+- Generates a persistent `planning_receipt_[task-name].md` inside `.antigravity-brain/projects/orbit/` prior to any code generation.
+
+### 2. Orbit Cartograph (Post-Execution)
+Once the agent completes its file modifications, it generates an impact report mapping all changes:
+- Displays an interactive post-execution impact map utilizing locally vendored **Cytoscape.js**.
+- Outlines every added, modified, moved, or deleted file visually.
+- Details the specific reasons, downstream impacts, and user prompts driving each change.
+- Preserves a dual-persistence history for auditing and recovery.
+
+---
 
 ## Installation
 
 ### Primary Method: Open VSX (Recommended)
 Because this extension is published to Open VSX, it is fully integrated into Antigravity:
 1. Open the **Extensions** sidebar in Antigravity (`Ctrl+Shift+X`).
-2. Search for `Interactive Form Planner` or `VNTRCORP.antigravity-interactive-form-planner-planning-tool`.
+2. Search for `Orbit` or `VNTRCORP.antigravity-interactive-form-planner-planning-tool`.
 3. Click **Install**.
 
 The extension will automatically configure your agent and MCP server on first launch!
 
-### Secondary Method: Manual GitHub Release
-1. Download the latest `.vsix` from the GitHub Releases page.
+### Secondary Method: Manual Installation
+1. Download the latest `.vsix` from the releases.
 2. In Antigravity: Extensions > `...` > **Install from VSIX**.
-
-## How It Works
-
-This extension enforces a rigorous planning protocol between the user and the agent. It integrates three core mechanisms to ensure project integrity and clarity.
-
-### 1. The Planning Form
-The agent proceeds immediately without a form if the task is unambiguous. However, the `antigravity-planner` MCP server triggers an interactive panel before any code is modified when:
-- A new feature or page is being built.
-- The task is ambiguous or missing required detail.
-- The agent identifies a better implementation than what was asked.
-- Multiple valid approaches exist and the choice affects structure.
-
-**Field Types:**
-- **single-choice**: Radio group (includes "Other").
-- **multi-choice**: Checkbox group (includes "Other").
-- **free-text**: Text input or textarea.
-
-Every form includes a **Dismiss** option. If dismissed, the agent proceeds with the original prompt and existing context only.
-
-### 2. Post Planning Analysis
-After every form submission (standard or via Deep Prompt Refining), the agent generates a structured Markdown artifact **before writing any code**.
-- **Location**: `[workspace-root]/post_planning_analysis/post_planning_analysis_[task-name].md`
-- **Contents**: Historical questions, user decisions, technical assumptions, permissions, and an execution roadmap.
-
-### 3. Deep Prompt Refining
-Triggered by adding `@trigger deep prompt refining` to your message, this feature starts an iterative planning loop.
-
-**Step-by-Step Walkthrough:**
-1. **Initiate**: Add `@trigger deep prompt refining` to your prompt.
-2. **Review**: The agent sends a planning form with an "Execute Plan" button.
-3. **Iterate**: Submit the form with your feedback. The agent will update the plan and send a new form for further refinement.
-4. **Finalize**: Once the plan is perfect, click **Execute Plan**. 
-5. **Execution**: The agent generates the Post Planning Analysis and begins implementing the task immediately.
 
 ---
 
-*Note: This extension is designed for the Antigravity IDE*
+## Orbit Memory System Setup (Orbit-Brain)
+
+The Orbit Memory System is a local, persistent knowledge and operating layer stored in your home directory (`~/.orbit-brain/`). It acts as a long-term brain for your AI agent, preserving architectural decisions, environments, and preferences across coding sessions.
+
+### Configure Your Orbit-Brain
+
+To configure your personalized Orbit-Brain using all your prior project history, previous agent sessions, planning receipts, and IDE logs, copy the comprehensive configuration prompt below and paste it into the agent chat in Antigravity.
+
+#### Orbit-Brain Configuration Prompt
+
+```text
+You are an expert AI software engineer and system architect. Your goal is to fully bootstrap and configure my local persistent memory system, known as "Orbit-Brain," which is stored at the root `~/.orbit-brain/` (or `C:\.orbit-brain` on Windows).
+
+To make my Orbit-Brain completely customized for my actual projects, workflows, preferences, and workspace history, you must perform a comprehensive deep search and analysis of my prior work. Follow this step-by-step plan:
+
+1. Locate Workspace History & IDE Data
+   - Identify active VS Code workspace folders and currently open projects.
+   - Search the local filesystem for the Antigravity App Data directory. On Windows, this is typically located under `C:\Users\<your-username>\.gemini\antigravity-ide` (check the active session parameters or environment paths).
+   - In that App Data folder, locate the `brain/` directory. This directory contains directories named with past conversation IDs, each containing files like `task.md`, `implementation_plan.md`, `walkthrough.md`, `scratch/` files, and `.system_generated/logs/transcript.jsonl` (the full history of my past conversations with the AI).
+   - Locate global agent config files in the home directory or workspace, such as `~/.gemini/GEMINI.md`.
+
+2. Deep Scan and Extract Context
+   - Scan the project codebases in the current workspace to identify their tech stacks, main APIs, design languages, coding styles, and dependency trees.
+   - Scan the past conversation folders and transcript files under the IDE brain folder. Retrieve details about:
+     - Key architectural decisions and why they were made.
+     - Challenging bugs, gotchas, and how they were resolved.
+     - My developer persona, coding style preferences, tools used, and naming conventions.
+     - Core system constraints and rules established in `GEMINI.md`.
+     - Summarized session outputs, notes, and temporary scratchpad scripts.
+
+3. Synthesize and Organize My Context
+   - Group the extracted data by project (matching my active workspace folders).
+   - Define my core workflows, preferences, environment variables, recurring tasks, and technology targets.
+
+4. Initialize the Orbit-Brain Architecture
+   - Ensure the central brain root is mapped to the standard user Orbit-Brain path (e.g. `C:\.orbit-brain` or `~/.orbit-brain/`).
+   - Create and populate the global coordination files:
+     - `BRAIN_ARCHITECTURE.md`: Detailing the exact directory tree structure and the Coherence and Maintenance Protocol for keeping the brain in sync.
+     - `global_context_summary.md`: Documenting the global environment setup (OS, shell, browser, package managers, tools) and my personalized developer profile.
+     - `skills_reference.md`: Mapping specialized framework prefixes, skill rules, or custom instructions.
+
+5. Generate Project-Specific Knowledge Layers
+   - For each project directory registered under `~/.orbit-brain/`, establish the long-term memory structures:
+     - `memories/INDEX.md`: A mapped catalog linking concepts, tags, and past session summaries to specific memory observation files.
+     - `memories/facts/`: Immutable truths about the project architecture, design system files, configurations, and user profile information.
+     - `memories/PROTOCOL.md`: The rule system dictating how observations must be captured and logged in the session directory.
+     - `memories/sessions/`: A timestamped folder. Populate this folder with generated historical session summaries (e.g. `SESSION_YYYYMMDD_TASK_NAME.md`) synthesized from your scan of my past Antigravity conversation logs, so that my past history is preserved and indexed!
+
+6. Verification and Final Report
+   - Run verification checks to ensure all directories and files are successfully generated.
+   - Output a beautiful, detailed directory layout of the generated Orbit-Brain.
+   - Provide a concise summary of the project profiles, concepts, and historical facts you extracted and initialized.
+   - Explain how I can easily maintain this brain going forward (such as by running the "update memory system" command at the end of sessions).
+
+Begin your research now by locating and scanning my current workspace folders and the Antigravity App Data `brain/` directory, then bootstrap the entire Orbit-Brain system!
+```
+
+---
+
+*Note: This extension is designed exclusively for the Antigravity IDE.*
+

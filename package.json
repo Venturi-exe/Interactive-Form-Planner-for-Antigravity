@@ -1,8 +1,8 @@
 {
   "name": "antigravity-interactive-form-planner-planning-tool",
-  "displayName": "Interactive Form Planner for Antigravity",
-  "description": "Triggers an interactive planning form when agent intent is ambiguous, before any code/file is written or changes, reducing token waste and aligning agent intent upfront.",
-  "version": "0.2.5",
+  "displayName": "Orbit",
+  "description": "Orbit : Ultimate planning tool for antigravity.",
+  "version": "0.2.6",
   "publisher": "VNTRCORP",
   "license": "SEE LICENSE IN LICENSE.txt",
   "engines": {
@@ -32,34 +32,148 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "interactive-forms-container",
-          "title": "Interactive Forms",
+          "id": "orbit-container",
+          "title": "Orbit",
           "icon": "$(symbol-parameter)"
+        },
+        {
+          "id": "orbit-quota-container",
+          "title": "Orbit Quota",
+          "icon": "$(dashboard)"
         }
       ]
     },
     "views": {
-      "interactive-forms-container": [
+      "orbit-container": [
         {
           "type": "webview",
-          "id": "interactiveForms.formView",
-          "name": "Agent Forms"
+          "id": "orbit.formView",
+          "name": "Orbit Panel"
+        }
+      ],
+      "orbit-quota-container": [
+        {
+          "type": "webview",
+          "id": "orbit.quotaView",
+          "name": "Quota Monitoring"
         }
       ]
     },
+
     "commands": [
       {
-        "command": "interactiveForms.showPanel",
-        "title": "Interactive Forms: Show Panel"
+        "command": "orbit.showPanel",
+        "title": "Orbit: Show Panel"
       },
       {
-        "command": "interactiveForms.testAlignment",
-        "title": "Interactive Forms: Test Planning"
+        "command": "orbit.testPlanner",
+        "title": "Orbit: Planner Demo (All Field Types + Execute Button)"
+      },
+      {
+        "command": "orbit.testCartograph",
+        "title": "Orbit: Cartograph Demo (Push Mock Impact Reports)"
+      },
+      {
+        "command": "orbit.openSettings",
+        "title": "Orbit: Open Settings",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "orbit.openMainTab",
+        "title": "Orbit: Maximize Panel View",
+        "icon": "$(screen-full)"
+      },
+      {
+        "command": "orbit.openMainTabPlanner",
+        "title": "Orbit: Open Planner in Main Tab"
+      },
+      {
+        "command": "orbit.openMainTabCartograph",
+        "title": "Orbit: Open Cartograph in Main Tab"
+      },
+      {
+        "command": "orbit.openHub",
+        "title": "Orbit: Open Cartograph Hub",
+        "icon": "$(dashboard)"
       }
-    ]
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "orbit.openMainTab",
+          "when": "view == orbit.formView",
+          "group": "navigation@0"
+        },
+        {
+          "command": "orbit.openSettings",
+          "when": "view == orbit.formView",
+          "group": "navigation@1"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Orbit Settings",
+      "properties": {
+        "orbit.inactivityTimeout": {
+          "type": "integer",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 60,
+          "description": "Inactivity timeout threshold in minutes for the pre-execution planning form before automatically triggering a timeout."
+        },
+        "orbit.countdownWarningThreshold": {
+          "type": "integer",
+          "default": 60,
+          "minimum": 5,
+          "maximum": 300,
+          "description": "Countdown warning threshold in seconds before inactivity timeout is triggered."
+        },
+        "orbit.quota.refreshRate": {
+          "type": "integer",
+          "default": 90,
+          "minimum": 10,
+          "description": "Interval in seconds between background server status and quota updates."
+        },
+        "orbit.quota.warningThreshold": {
+          "type": "integer",
+          "default": 40,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Quota percentage threshold below which indicators turn yellow and warning system alerts are shown."
+        },
+        "orbit.quota.criticalThreshold": {
+          "type": "integer",
+          "default": 20,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Quota percentage threshold below which indicators turn red and critical system alerts are shown."
+        },
+        "orbit.quota.gaugeStyle": {
+          "type": "string",
+          "default": "circular-segmented",
+          "enum": [
+            "circular-segmented",
+            "circular-plain",
+            "horizontal-bar",
+            "vertical-bar",
+            "segmented-horizontal-bar",
+            "segmented-vertical-bar"
+          ],
+          "description": "The visual style of the quota remaining gauges."
+        },
+        "orbit.quota.historyRangeDays": {
+          "type": "integer",
+          "default": 7,
+          "minimum": 1,
+          "maximum": 30,
+          "description": "Number of days of history logs to retain for burn rate calculation."
+        }
+      }
+    }
   },
   "scripts": {
-    "compile": "tsc -p ./",
+    "build-webview": "node src/webview/build.js",
+    "compile": "tsc -p ./ && npm run build-webview",
     "watch": "tsc -watch -p ./",
     "package": "npx @vscode/vsce package --no-dependencies",
     "lint": "tsc --noEmit"
@@ -67,10 +181,18 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/vscode": "^1.96.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "esbuild": "^0.20.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@types/dagre": "^0.7.52"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
-    "zod": "^3.24.0"
+    "zod": "^3.24.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "@xyflow/react": "^12.0.0",
+    "dagre": "^0.8.5"
   }
 }

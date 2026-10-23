@@ -1,0 +1,1 @@
+"function runFirstTimeSetup(context: vscode.ExtensionContext): void {\n    if (context.globalState.get(\"setupVersion\") === \"7\") {\n        return;\n    }"

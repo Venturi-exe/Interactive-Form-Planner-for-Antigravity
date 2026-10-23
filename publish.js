@@ -1,3 +1,11 @@
+/**
+ * Orbit : Ultimate planning tool for antigravity.
+ *
+ * Copyright (c) 2026 César Vissouze (Venturi-exe / VNTR.CORP)
+ * Licensed under the Orbit Personal Use License.
+ * See LICENSE.txt in the project root for license information.
+ */
+
 const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -9,8 +17,7 @@ const originalName = pkg.name;
 
 // Add any legacy IDs you want to keep updated here
 const LEGACY_IDS = [
-    "antigravity-pre-execution-form-planner",
-    "antigravity-alignment"
+    "antigravity-pre-execution-form-planner"
 ];
 
 function run(cmd) {

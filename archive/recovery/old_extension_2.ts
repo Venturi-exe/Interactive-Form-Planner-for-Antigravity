@@ -1,0 +1,1 @@
+"            vscode.window.showInformationMessage(\"Orbit Demo: Pushed 1 comprehensive showcase report to Cartograph.\");\n        })\n    );   );\n\n    // Start the file-based IPC bridge"

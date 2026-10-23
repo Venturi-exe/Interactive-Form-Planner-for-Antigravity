@@ -1,6 +1,6 @@
-Interactive Form Planner for Antigravity Personal (IFPA) Use License
+Orbit Personal Use License
 
-Copyright (c) 2026 IFPA by Venturi-exe/VNTR.CORP
+Copyright (c) 2026 Orbit by César Vissouze (Venturi-exe / VNTR.CORP)
 
 This software is licensed for PERSONAL, NON-COMMERCIAL USE ONLY.
 

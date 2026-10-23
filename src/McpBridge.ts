@@ -1,3 +1,11 @@
+/**
+ * Orbit : Ultimate planning tool for antigravity.
+ *
+ * Copyright (c) 2026 César Vissouze (Venturi-exe / VNTR.CORP)
+ * Licensed under the Orbit Personal Use License.
+ * See LICENSE.txt in the project root for license information.
+ */
+
 import * as vscode from "vscode";
 import * as fs from "fs";
 import * as path from "path";
@@ -20,7 +28,7 @@ export class McpBridge {
     private _processing = new Set<string>();
 
     constructor(private readonly _formViewProvider: FormViewProvider) {
-        this._outputChannel = vscode.window.createOutputChannel("Planner");
+        this._outputChannel = vscode.window.createOutputChannel("Orbit");
     }
 
     /**
@@ -88,6 +96,9 @@ export class McpBridge {
                     action: result.action,
                     dismissed: result.dismissed,
                     data: result.data,
+                    clarificationRequest: result.clarificationRequest,
+                    specificClarifications: (result as any).specificClarifications,
+                    partialAnswers: (result as any).partialAnswers,
                 };
 
                 const responsePath = path.join(RESPONSES_DIR, `${request.requestId}.json`);

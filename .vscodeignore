@@ -6,4 +6,6 @@ tsconfig.json
 .gitignore
 **/*.ts
 !out/**
-assets
+assets/*.gif
+assets/*.mp4
+archive/

@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Orbit Test Harness — Planner + Cartograph</title>
+    <link rel="stylesheet" href="form.css">
+    <link rel="stylesheet" href="cartograph.css">
+    <style>
+        /* VS Code theme emulation */
+        :root {
+            --vscode-font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            --vscode-font-size: 13px;
+            --vscode-foreground: #cccccc;
+            --vscode-editor-background: #1e1e1e;
+            --vscode-sideBar-background: #252526;
+            --vscode-button-background: #0e639c;
+            --vscode-button-foreground: #ffffff;
+            --vscode-button-hoverBackground: #1177bb;
+            --vscode-focusBorder: #007acc;
+            --vscode-panel-border: rgba(128, 128, 128, 0.15);
+            --vscode-testing-iconPassed: #0f7d3e;
+            --vscode-testing-iconQueued: #d2691e;
+            --vscode-testing-iconFailed: #be1e3e;
+            --vscode-symbolIcon-interfaceForeground: #0e639c;
+            --vscode-descriptionForeground: #8c8c8c;
+            --vscode-input-background: #3c3c3c;
+            --vscode-input-border: rgba(128, 128, 128, 0.3);
+            --vscode-input-foreground: #cccccc;
+            --vscode-badge-background: #4d4d4d;
+            --vscode-badge-foreground: #cccccc;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        html, body {
+            height: 100vh;
+            background-color: var(--vscode-editor-background);
+            color: var(--vscode-foreground);
+            font-family: var(--vscode-font-family);
+            font-size: var(--vscode-font-size);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* ─── Harness chrome ─────────────────────────────────────── */
+        .harness-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 8px 12px;
+            background: #2d2d2d;
+            border-bottom: 1px solid rgba(128,128,128,0.25);
+            flex-shrink: 0;
+        }
+
+        .harness-title {
+            font-size: 11px;
+            font-weight: 600;
+            color: #8c8c8c;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+
+        .harness-tab-group {
+            display: flex;
+            gap: 4px;
+        }
+
+        .harness-tab {
+            padding: 4px 12px;
+            font-size: 12px;
+            border: 1px solid rgba(128,128,128,0.3);
+            border-radius: 4px;
+            background: transparent;
+            color: #8c8c8c;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .harness-tab:hover { color: #cccccc; border-color: rgba(128,128,128,0.5); }
+        .harness-tab.active { background: #0e639c; color: #fff; border-color: #0e639c; }
+
+        .harness-action-group {
+            display: flex;
+            gap: 6px;
+            margin-left: auto;
+        }
+
+        .harness-btn {
+            padding: 4px 10px;
+            font-size: 11px;
+            border: 1px solid rgba(128,128,128,0.3);
+            border-radius: 4px;
+            background: #3c3c3c;
+            color: #cccccc;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .harness-btn:hover { background: #4a4a4a; }
+        .harness-btn.primary { background: #0e639c; color: #fff; border-color: #0e639c; }
+        .harness-btn.primary:hover { background: #1177bb; }
+
+        /* ─── Panels ─────────────────────────────────────────────── */
+        .harness-body {
+            flex: 1;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .harness-panel {
+            position: absolute;
+            inset: 0;
+            display: none;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .harness-panel.active { display: flex; }
+
+        /* Planner panel needs scroll + padding like the real sidebar */
+        #panel-planner {
+            overflow-y: auto;
+            padding: 12px;
+            background-color: var(--vscode-sideBar-background);
+        }
+
+        /* Cartograph takes full height */
+        #tab-cartograph {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+
+        /* ─── Timeout warning bar (planner) ─────────────────────── */
+        #timeout-warning {
+            display: none;
+        }
+        #timeout-warning.visible {
+            display: block;
+            padding: 6px 12px;
+            background: #be1e3e22;
+            border-left: 3px solid #be1e3e;
+            font-size: 12px;
+            color: #ff6b6b;
+            margin-bottom: 8px;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- ─── Harness header ─────────────────────────────────── -->
+    <header class="harness-header">
+        <span class="harness-title">Orbit Test Harness</span>
+        <div class="harness-tab-group">
+            <button class="harness-tab active" onclick="switchHarnessTab('planner')">Planner</button>
+            <button class="harness-tab" onclick="switchHarnessTab('cartograph')">Cartograph</button>
+        </div>
+        <div class="harness-action-group">
+            <!-- Planner controls -->
+            <div id="planner-controls" style="display:flex;gap:6px;">
+                <button class="harness-btn" onclick="sendBasicForm()">Basic Form</button>
+                <button class="harness-btn" onclick="sendFullForm()">All Field Types</button>
+                <button class="harness-btn primary" onclick="sendExecuteForm()">With Execute Button</button>
+                <button class="harness-btn" onclick="clearForm()">Clear</button>
+            </div>
+            <!-- Cartograph controls -->
+            <div id="cartograph-controls" style="display:none;gap:6px;">
+                <button class="harness-btn" onclick="loadSingleReport()">Single Report</button>
+                <button class="harness-btn primary" onclick="loadFullHistory()">Full History (3 sessions)</button>
+                <button class="harness-btn" onclick="loadNewReport()">Push New Report</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- ─── Body ──────────────────────────────────────────── -->
+    <div class="harness-body">
+
+        <!-- Planner panel -->
+        <div id="panel-planner" class="harness-panel active">
+            <div id="timeout-warning"></div>
+
+            <div id="empty-state" style="display:flex;">
+                <div class="empty-icon">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+                    </svg>
+                </div>
+                <p class="empty-title">Awaiting Planner Form</p>
+                <p class="empty-description">Click a button above to inject a test form and preview the Orbit Planner UI.</p>
+            </div>
+
+            <div id="form-content" style="display:none;"></div>
+        </div>
+
+        <!-- Cartograph panel -->
+        <div id="panel-cartograph" class="harness-panel">
+            <div id="tab-cartograph"></div>
+        </div>
+
+    </div>
+
+    <!-- ─── Stubs ──────────────────────────────────────────── -->
+    <script>
+        // ── Tab switching ──────────────────────────────────────────
+        function switchHarnessTab(tab) {
+            document.querySelectorAll('.harness-tab').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.harness-panel').forEach(p => p.classList.remove('active'));
+            document.getElementById('planner-controls').style.display = tab === 'planner' ? 'flex' : 'none';
+            document.getElementById('cartograph-controls').style.display = tab === 'cartograph' ? 'flex' : 'none';
+            event.target.classList.add('active');
+            document.getElementById('panel-' + tab).classList.add('active');
+        }
+
+        // ── Mock VSCode API ────────────────────────────────────────
+        let _reqId = 1;
+
+        window.vscode = {
+            postMessage: function(msg) {
+                const out = JSON.stringify(msg, null, 2);
+                console.log('%c[VSCode PostMessage]', 'color:#0e639c;font-weight:bold', msg);
+
+                if (msg.type === 'webview_ready') {
+                    // Cartograph: auto-load history on ready
+                    setTimeout(loadFullHistory, 400);
+                }
+
+                if (msg.type === 'form_submitted') {
+                    console.log('%c[Form Submitted] data:', 'color:#0f7d3e;font-weight:bold', msg.data);
+                }
+                if (msg.type === 'form_executed') {
+                    console.log('%c[Execute Plan triggered] data:', 'color:#d2691e;font-weight:bold', msg.data);
+                }
+                if (msg.type === 'form_dismissed') {
+                    console.log('%c[Form Dismissed]', 'color:#8c8c8c');
+                }
+                if (msg.type === 'form_clarification') {
+                    console.log('%c[Clarification sent]', 'color:#007acc', msg.question);
+                }
+            }
+        };
+
+        window.acquireVsCodeApi = function() { return window.vscode; };
+
+        // ── Form injectors ─────────────────────────────────────────
+        function dispatchFormMessage(schema) {
+            schema.requestId = 'test-req-' + (_reqId++);
+            window.dispatchEvent(new MessageEvent('message', { data: { type: 'render_form', requestId: schema.requestId, ...schema } }));
+        }
+
+        function sendBasicForm() {
+            dispatchFormMessage({
+                title: 'Basic Single-Choice Form',
+                description: 'A minimal test showing a required single-choice field.',
+                showExecuteButton: false,
+                fields: [
+                    {
+                        id: 'approach',
+                        label: 'Which approach should the agent take?',
+                        type: 'single-choice',
+                        required: true,
+                        options: ['Option A — Minimal change', 'Option B — Full refactor', 'Option C — New file only']
+                    }
+                ]
+            });
+        }
+
+        function sendFullForm() {
+            dispatchFormMessage({
+                title: 'Full Field-Type Demo',
+                description: 'Tests every field type available in the Orbit Planner: single-choice, multi-choice, and free-text (short and long).',
+                showExecuteButton: false,
+                fields: [
+                    {
+                        id: 'deploy_target',
+                        label: 'Select deployment environment',
+                        type: 'single-choice',
+                        required: true,
+                        options: ['Production', 'Staging', 'Local Dev', 'Preview Branch']
+                    },
+                    {
+                        id: 'notify_channels',
+                        label: 'Which channels should receive deployment notifications?',
+                        type: 'multi-choice',
+                        required: false,
+                        options: ['Slack #deployments', 'Email team lead', 'GitHub status check', 'PagerDuty alert']
+                    },
+                    {
+                        id: 'ticket_ref',
+                        label: 'Ticket or issue reference',
+                        type: 'free-text',
+                        required: false,
+                        placeholder: 'e.g. ORB-412'
+                    },
+                    {
+                        id: 'additional_notes',
+                        label: 'Additional context or constraints for the agent',
+                        type: 'free-text',
+                        required: false,
+                        placeholder: 'Describe any edge cases, constraints, or dependencies the agent should be aware of before proceeding with implementation.'
+                    }
+                ]
+            });
+        }
+
+        function sendExecuteForm() {
+            dispatchFormMessage({
+                title: 'Deep Prompt Refining — Iteration 2',
+                description: 'All field types enabled plus the Execute Plan button. Tests the deep prompt refining workflow where the user can submit to keep refining or click Execute Plan to trigger immediate execution.',
+                showExecuteButton: true,
+                fields: [
+                    {
+                        id: 'scope',
+                        label: 'What is the scope of this implementation?',
+                        type: 'single-choice',
+                        required: true,
+                        options: ['Single component fix', 'Feature across multiple files', 'Full architecture change', 'Bug fix + tests']
+                    },
+                    {
+                        id: 'skills',
+                        label: 'Which skills should the agent activate?',
+                        type: 'multi-choice',
+                        required: false,
+                        options: ['craft-visuals', 'accessibility', 'performance', 'seo', 'conversion-optimization']
+                    },
+                    {
+                        id: 'priority',
+                        label: 'Priority constraint',
+                        type: 'free-text',
+                        required: false,
+                        placeholder: 'e.g. speed over completeness'
+                    },
+                    {
+                        id: 'out_of_scope',
+                        label: 'What should the agent explicitly NOT do in this task?',
+                        type: 'free-text',
+                        required: false,
+                        placeholder: 'List anything explicitly out of scope — files to avoid, features to skip, approaches to reject, or dependencies not to install.'
+                    }
+                ]
+            });
+        }
+
+        function clearForm() {
+            document.getElementById('form-content').style.display = 'none';
+            document.getElementById('empty-state').style.display = 'flex';
+        }
+
+        // ── Cartograph data injectors ──────────────────────────────
+        const mockReports = [
+            {
+                taskId: "task-a1b2c3",
+                sessionId: "session-feat-auth",
+                summary: "Auth Module: Implement JWT token refresh and session persistence",
+                timestamp: "2026-05-18T08:10:00Z",
+                changes: [
+                    { filePath: "src/auth/tokenManager.ts", changeType: "created", promptExcerpt: "Create token manager with refresh logic", alignmentToolOutput: { "approach": "JWT sliding window", "expiry": "7d" } },
+                    { filePath: "src/auth/sessionStore.ts", changeType: "created", promptExcerpt: "Persist session data across extension restarts", alignmentToolOutput: null },
+                    { filePath: "src/auth/guards.ts", changeType: "edited", promptExcerpt: "Update route guards to use new token manager", alignmentToolOutput: null },
+                    { filePath: "src/FormViewProvider.ts", changeType: "edited", promptExcerpt: "Inject auth headers into webview requests", alignmentToolOutput: { "skipRoutes": ["/health"] } },
+                    { filePath: "tests/auth/tokenManager.test.ts", changeType: "created", promptExcerpt: "Unit tests for token refresh edge cases", alignmentToolOutput: null }
+                ]
+            },
+            {
+                taskId: "task-d4e5f6",
+                sessionId: "session-feat-auth",
+                summary: "Auth Module: Add OAuth provider integration (GitHub + Google)",
+                timestamp: "2026-05-18T08:25:00Z",
+                changes: [
+                    { filePath: "src/auth/providers/github.ts", changeType: "created", promptExcerpt: "GitHub OAuth callback and token exchange", alignmentToolOutput: null },
+                    { filePath: "src/auth/providers/google.ts", changeType: "created", promptExcerpt: "Google OAuth PKCE flow implementation", alignmentToolOutput: null },
+                    { filePath: "src/auth/tokenManager.ts", changeType: "edited", promptExcerpt: "Support multi-provider token storage", alignmentToolOutput: null },
+                    { filePath: "src/webview/form.css", changeType: "edited", promptExcerpt: "Style OAuth provider selection buttons", alignmentToolOutput: null }
+                ]
+            },
+            {
+                taskId: "task-g7h8i9",
+                sessionId: "session-cartograph-ui",
+                summary: "Cartograph UI: Remove MiniMap and migrate Detail Panel Height to Settings",
+                timestamp: "2026-05-18T04:15:00Z",
+                changes: [
+                    { filePath: "src/webview/cartograph-ui/index.tsx", changeType: "edited", promptExcerpt: "Remove MiniMap import and component from React Flow canvas", alignmentToolOutput: null },
+                    { filePath: "src/webview/cartograph-ui/Inspector.tsx", changeType: "edited", promptExcerpt: "Replace internal slider with height prop from Settings", alignmentToolOutput: { "approach": "Centralize config in Orbit Settings page" } },
+                    { filePath: "src/FormViewProvider.ts", changeType: "edited", promptExcerpt: "Add Detail Panel Height slider to Settings page", alignmentToolOutput: null }
+                ]
+            },
+            {
+                taskId: "task-j1k2l3",
+                sessionId: "session-cartograph-ui",
+                summary: "Cartograph Inspector: Fix Summary field showing taskId instead of actual summary text",
+                timestamp: "2026-05-18T04:45:00Z",
+                changes: [
+                    { filePath: "src/webview/cartograph-ui/Inspector.tsx", changeType: "edited", promptExcerpt: "Show label (full summary) in Summary row and subtitle in Task ID row", alignmentToolOutput: null }
+                ]
+            },
+            {
+                taskId: "task-m4n5o6",
+                sessionId: "session-perf",
+                summary: "Performance: Bundle splitting and lazy loading for webview assets",
+                timestamp: "2026-05-18T09:00:00Z",
+                changes: [
+                    { filePath: "src/webview/build.js", changeType: "edited", promptExcerpt: "Split cartograph and planner into separate chunks", alignmentToolOutput: { "bundler": "esbuild", "splitting": true } },
+                    { filePath: "src/webview/cartograph.js", changeType: "deleted", promptExcerpt: "Replaced by split bundles", alignmentToolOutput: null },
+                    { filePath: "src/webview/cartograph-chunk.js", changeType: "created", promptExcerpt: "Cartograph-only bundle output", alignmentToolOutput: null },
+                    { filePath: "src/webview/planner-chunk.js", changeType: "created", promptExcerpt: "Planner-only bundle output", alignmentToolOutput: null },
+                    { filePath: "src/FormViewProvider.ts", changeType: "edited", promptExcerpt: "Update CSP and script injection to reference new chunk filenames", alignmentToolOutput: null }
+                ]
+            }
+        ];
+
+        function loadSingleReport() {
+            const single = [mockReports[2]];
+            if (window.OrbitCartograph) {
+                window.OrbitCartograph.loadHistory(single);
+            } else {
+                window.dispatchEvent(new MessageEvent('message', { data: { type: 'load_history', reports: single } }));
+            }
+        }
+
+        function loadFullHistory() {
+            if (window.OrbitCartograph) {
+                window.OrbitCartograph.loadHistory(mockReports);
+            } else {
+                window.dispatchEvent(new MessageEvent('message', { data: { type: 'load_history', reports: mockReports } }));
+            }
+        }
+
+        function loadNewReport() {
+            const newReport = {
+                taskId: "task-live-" + Date.now(),
+                sessionId: "session-live",
+                summary: "Live Test: Pushed at " + new Date().toLocaleTimeString(),
+                timestamp: new Date().toISOString(),
+                changes: [
+                    { filePath: "src/webview/test_harness.html", changeType: "edited", promptExcerpt: "Updated test harness with richer mock data", alignmentToolOutput: null },
+                    { filePath: "src/webview/form.css", changeType: "edited", promptExcerpt: "Removed max-height cap on detail-panel", alignmentToolOutput: null }
+                ]
+            };
+            if (window.OrbitCartograph) {
+                window.OrbitCartograph.addNewReport(newReport);
+            } else {
+                window.dispatchEvent(new MessageEvent('message', { data: { type: 'new_report', report: newReport } }));
+            }
+        }
+
+        // orbitConfig stub
+        window.orbitConfig = {
+            viewMode: 'combined',
+            inactivityTimeout: 5,
+            countdownWarningThreshold: 60,
+            detailPanelHeight: 200,
+            zoomSensitivity: 1
+        };
+    </script>
+
+    <!-- Bundles -->
+    <script src="cartograph.js"></script>
+    <script src="form.js"></script>
+</body>
+</html>

@@ -1,20 +1,123 @@
 // @ts-nocheck
-/* Antigravity Planner - Webview Script */
-/* Renders planning forms, handles submit and dismiss. */
+/**
+ * Orbit : Ultimate planning tool for antigravity.
+ *
+ * Copyright (c) 2026 César Vissouze (Venturi-exe / VNTR.CORP)
+ * Licensed under the Orbit Personal Use License.
+ * See LICENSE.txt in the project root for license information.
+ */
 
 (function () {
     const vscode = acquireVsCodeApi();
+    window.vscode = vscode;
 
     const emptyState = document.getElementById("empty-state");
     const formContent = document.getElementById("form-content");
 
     let currentRequestId = null;
+    let inactivityTimeoutMin = 5;
+    let countdownWarningThresholdSec = 60;
+    let warningTimer = null;
+    let timeRemainingSec = 0;
+
+    if (window.orbitConfig) {
+        if (window.orbitConfig.inactivityTimeout) {
+            inactivityTimeoutMin = window.orbitConfig.inactivityTimeout;
+        }
+        if (window.orbitConfig.countdownWarningThreshold) {
+            countdownWarningThresholdSec = window.orbitConfig.countdownWarningThreshold;
+        }
+    }
+
+    // Set up tab-switching logic
+    const tabBtnPlanner = document.getElementById("tab-btn-planner");
+    const tabBtnCartograph = document.getElementById("tab-btn-cartograph");
+    const tabPlanner = document.getElementById("tab-planner");
+    const tabCartograph = document.getElementById("tab-cartograph");
+
+    function switchTab(tabId) {
+        if (window.orbitConfig && window.orbitConfig.viewMode && window.orbitConfig.viewMode !== "combined") {
+            return;
+        }
+        if (tabId === "cartograph") {
+            if (tabBtnCartograph && tabBtnPlanner && tabCartograph && tabPlanner) {
+                tabBtnCartograph.classList.add("active");
+                tabBtnPlanner.classList.remove("active");
+                tabCartograph.classList.add("active");
+                tabPlanner.classList.remove("active");
+            }
+        } else if (tabId === "planner") {
+            if (tabBtnCartograph && tabBtnPlanner && tabCartograph && tabPlanner) {
+                tabBtnPlanner.classList.add("active");
+                tabBtnCartograph.classList.remove("active");
+                tabPlanner.classList.add("active");
+                tabCartograph.classList.remove("active");
+            }
+        }
+        vscode.postMessage({ type: "tab_changed", tab: tabId });
+    }
+
+    if (tabBtnPlanner && tabBtnCartograph && tabPlanner && tabCartograph) {
+        tabBtnPlanner.addEventListener("click", () => {
+            switchTab("planner");
+        });
+
+        tabBtnCartograph.addEventListener("click", () => {
+            switchTab("cartograph");
+        });
+    }
+
+    // Restore to sidebar button click
+    const btnRestoreSidebar = document.getElementById("btn-restore-sidebar");
+    if (btnRestoreSidebar) {
+        btnRestoreSidebar.addEventListener("click", () => {
+            vscode.postMessage({
+                type: "restore_sidebar",
+                viewMode: (window.orbitConfig && window.orbitConfig.viewMode) ? window.orbitConfig.viewMode : "combined"
+            });
+        });
+    }
 
     window.addEventListener("message", (event) => {
         const message = event.data;
         if (message.type === "render_form") {
             currentRequestId = message.requestId;
             renderForm(message);
+        } else if (message.type === "config_updated") {
+            if (message.config) {
+                if (message.config.inactivityTimeout) {
+                    inactivityTimeoutMin = message.config.inactivityTimeout;
+                }
+                if (message.config.countdownWarningThreshold) {
+                    countdownWarningThresholdSec = message.config.countdownWarningThreshold;
+                }
+                if (message.config.zoomSensitivity != null && window.OrbitCartograph) {
+                    window.OrbitCartograph.setZoomSensitivity(message.config.zoomSensitivity);
+                }
+                if (message.config.detailPanelHeight != null && window.OrbitCartograph) {
+                    window.OrbitCartograph.setDetailPanelHeight(message.config.detailPanelHeight);
+                }
+                resetInactivityTimer();
+            }
+        } else if (message.type === "load_history") {
+            if (window.OrbitCartograph) {
+                window.OrbitCartograph.loadHistory(message.reports);
+            }
+        } else if (message.type === "new_report") {
+            if (window.OrbitCartograph) {
+                window.OrbitCartograph.addNewReport(message.report);
+            }
+        } else if (message.type === "switch_tab") {
+            switchTab(message.tab);
+        } else if (message.type === "reset_form") {
+            stopInactivityTimer();
+            currentRequestId = null;
+            formContent.style.display = "none";
+            emptyState.style.display = "flex";
+        } else if (message.type === "reset_timer") {
+            if (currentRequestId) {
+                startInactivityTimer();
+            }
         }
     });
 
@@ -73,21 +176,53 @@
         dismissBtn.addEventListener("click", handleDismiss);
         actions.appendChild(dismissBtn);
 
+        // Clarification Section
+        const clarificationSec = document.createElement("div");
+        clarificationSec.className = "clarification-section";
+
+        const clarifTitle = document.createElement("div");
+        clarifTitle.className = "clarification-title";
+        clarifTitle.textContent = "Need clarification on these questions? Ask the agent:";
+        clarificationSec.appendChild(clarifTitle);
+
+        const clarifRow = document.createElement("div");
+        clarifRow.className = "clarification-row";
+
+        const clarifInput = document.createElement("textarea");
+        clarifInput.id = "clarification-input";
+        clarifInput.placeholder = "Ask what saying yes implies, clarify options, etc.";
+        clarifRow.appendChild(clarifInput);
+
+        const clarifBtn = document.createElement("button");
+        clarifBtn.type = "button";
+        clarifBtn.id = "clarification-btn";
+        clarifBtn.className = "secondary-btn";
+        clarifBtn.textContent = "Ask Clarification";
+        clarifBtn.addEventListener("click", handleClarificationSubmit);
+        clarifRow.appendChild(clarifBtn);
+
+        clarificationSec.appendChild(clarifRow);
+        form.appendChild(clarificationSec);
+
         form.appendChild(actions);
         formContent.appendChild(form);
 
         // Focus first input
         const firstInput = form.querySelector("input, textarea, select");
         if (firstInput) firstInput.focus();
+
+        // Start inactivity timeout
+        startInactivityTimer();
     }
 
-    /**
-     * Creates a single form field.
-     */
     function createField(field) {
         const container = document.createElement("div");
         container.className = "form-field";
         container.dataset.fieldId = field.id;
+
+        // Flex header row
+        const headerRow = document.createElement("div");
+        headerRow.className = "field-header-row";
 
         // Label
         const label = document.createElement("label");
@@ -96,7 +231,26 @@
         if (field.required) {
             label.innerHTML += '<span class="required-marker">*</span>';
         }
-        container.appendChild(label);
+        headerRow.appendChild(label);
+
+        // Ask Clarification Toggle
+        const clarifToggleLabel = document.createElement("label");
+        clarifToggleLabel.className = "clarification-toggle-label";
+        clarifToggleLabel.title = "Ask specific clarification on this question";
+
+        const clarifCheckbox = document.createElement("input");
+        clarifCheckbox.type = "checkbox";
+        clarifCheckbox.className = "field-clarification-checkbox";
+        clarifCheckbox.dataset.fieldId = field.id;
+        
+        const clarifToggleSpan = document.createElement("span");
+        clarifToggleSpan.textContent = "Clarify";
+
+        clarifToggleLabel.appendChild(clarifCheckbox);
+        clarifToggleLabel.appendChild(clarifToggleSpan);
+        headerRow.appendChild(clarifToggleLabel);
+
+        container.appendChild(headerRow);
 
         switch (field.type) {
             case "single-choice":
@@ -110,6 +264,28 @@
                 break;
         }
 
+        // Clarification Sub-textarea (hidden by default)
+        const clarifTextArea = document.createElement("textarea");
+        clarifTextArea.className = "field-clarification-textarea";
+        clarifTextArea.placeholder = 'What specifically is unclear about this question?';
+        clarifTextArea.style.display = "none";
+        clarifTextArea.style.marginTop = "6px";
+        clarifTextArea.rows = 2;
+        container.appendChild(clarifTextArea);
+
+        // Bind toggle event
+        clarifCheckbox.addEventListener("change", (e) => {
+            if (e.target.checked) {
+                clarifTextArea.style.display = "block";
+                clarifTextArea.focus();
+                toggleFieldInputs(container, true);
+            } else {
+                clarifTextArea.style.display = "none";
+                clarifTextArea.value = "";
+                toggleFieldInputs(container, false);
+            }
+        });
+
         // Validation error
         const errorEl = document.createElement("div");
         errorEl.className = "field-error";
@@ -117,6 +293,25 @@
         container.appendChild(errorEl);
 
         return container;
+    }
+
+    /**
+     * Toggles the disabled state and required attributes of a field's main inputs.
+     */
+    function toggleFieldInputs(fieldContainer, disabled) {
+        const inputs = fieldContainer.querySelectorAll("input:not(.field-clarification-checkbox), textarea:not(.field-clarification-textarea), select");
+        inputs.forEach((input) => {
+            input.disabled = disabled;
+            if (disabled) {
+                input.required = false; // Bypass HTML5 validation!
+                input.style.opacity = "0.5";
+            } else {
+                if (input.dataset.wasRequired === "true") {
+                    input.required = true;
+                }
+                input.style.opacity = "1";
+            }
+        });
     }
 
     /**
@@ -138,7 +333,10 @@
             radio.type = "radio";
             radio.name = field.id;
             radio.value = option;
-            if (field.required) radio.required = true;
+            if (field.required) {
+                radio.required = true;
+                radio.dataset.wasRequired = "true";
+            }
 
             const span = document.createElement("span");
             span.textContent = option;
@@ -242,7 +440,10 @@
             textarea.name = field.id;
             textarea.placeholder = field.placeholder || "";
             textarea.rows = 3;
-            if (field.required) textarea.required = true;
+            if (field.required) {
+                textarea.required = true;
+                textarea.dataset.wasRequired = "true";
+            }
             return textarea;
         }
 
@@ -251,7 +452,10 @@
         input.id = "field-" + field.id;
         input.name = field.id;
         input.placeholder = field.placeholder || "";
-        if (field.required) input.required = true;
+        if (field.required) {
+            input.required = true;
+            input.dataset.wasRequired = "true";
+        }
         return input;
     }
 
@@ -348,6 +552,9 @@
             data: formData,
         });
 
+        stopInactivityTimer();
+        currentRequestId = null;
+
         // Return to empty state
         setTimeout(() => {
             formContent.style.display = "none";
@@ -395,6 +602,9 @@
             data: formData,
         });
 
+        stopInactivityTimer();
+        currentRequestId = null;
+
         // Return to empty state
         setTimeout(() => {
             formContent.style.display = "none";
@@ -411,9 +621,203 @@
             requestId: currentRequestId,
         });
 
+        stopInactivityTimer();
+        currentRequestId = null;
+
         // Return to empty state
         formContent.style.display = "none";
         emptyState.style.display = "flex";
+    }
+
+    function handleClarificationSubmit() {
+        const input = document.getElementById("clarification-input");
+        const query = input ? input.value.trim() : "";
+
+        // Collect specific clarifications
+        const specificClarifications = [];
+        const checkboxes = document.querySelectorAll(".field-clarification-checkbox:checked");
+        
+        checkboxes.forEach((cb) => {
+            const fid = cb.dataset.fieldId;
+            const formField = cb.closest(".form-field");
+            const textArea = formField.querySelector(".field-clarification-textarea");
+            const labelEl = formField.querySelector("label");
+            // Remove the 'Clarify' label text if present to get clean question label
+            const questionLabel = labelEl ? labelEl.textContent.replace("Clarify", "").trim() : fid;
+            
+            specificClarifications.push({
+                fieldId: fid,
+                question: questionLabel,
+                clarificationQuery: textArea ? textArea.value.trim() : ""
+            });
+        });
+
+        // Collect partial answers for the fields that were NOT checked for clarification
+        const partialAnswers = {};
+        const allFields = document.querySelectorAll(".form-field");
+        
+        allFields.forEach((fieldEl) => {
+            const fid = fieldEl.dataset.fieldId;
+            const cb = fieldEl.querySelector(".field-clarification-checkbox");
+            if (cb && cb.checked) {
+                // Ticked for clarification, skip answering
+                return;
+            }
+
+            // Otherwise, collect value
+            const radioGroup = fieldEl.querySelector(".radio-group");
+            const checkboxGroup = fieldEl.querySelector(".checkbox-group");
+            const textInput = fieldEl.querySelector("input[type='text'], textarea:not(.field-clarification-textarea)");
+
+            if (radioGroup) {
+                const checked = radioGroup.querySelector("input:checked");
+                let val = checked ? checked.value : "";
+                if (val === "Other - describe below") {
+                    const otherText = fieldEl.querySelector(".other-input");
+                    val = otherText && otherText.value.trim() ? otherText.value.trim() : "";
+                }
+                partialAnswers[fid] = val;
+            } else if (checkboxGroup) {
+                const checked = checkboxGroup.querySelectorAll("input:checked");
+                const values = Array.from(checked).map((c) => c.value);
+                const otherIdx = values.indexOf("Other - describe below");
+                if (otherIdx !== -1) {
+                    const otherText = fieldEl.querySelector(".other-input");
+                    if (otherText && otherText.value.trim()) {
+                        values[otherIdx] = otherText.value.trim();
+                    } else {
+                        values.splice(otherIdx, 1);
+                    }
+                }
+                partialAnswers[fid] = values;
+            } else if (textInput) {
+                partialAnswers[fid] = textInput.value.trim();
+            }
+        });
+
+        // Ensure we have at least a general query or one specific clarification
+        if (!query && specificClarifications.length === 0) {
+            alert("Please type a clarification question or tick a field above to ask for clarification.");
+            return;
+        }
+
+        // Disable all buttons in the form to prevent double-submit
+        const buttons = document.querySelectorAll("button");
+        buttons.forEach((btn) => { btn.disabled = true; });
+        if (input) input.disabled = true;
+
+        // Set submitting loading text on the clarification button
+        const clarifBtn = document.getElementById("clarification-btn");
+        if (clarifBtn) {
+            clarifBtn.innerHTML = '<span class="spinner"></span> Asking Agent...';
+        }
+
+        vscode.postMessage({
+            type: "form_clarification",
+            requestId: currentRequestId,
+            question: query,
+            specificClarifications: specificClarifications,
+            partialAnswers: partialAnswers
+        });
+
+        stopInactivityTimer();
+        currentRequestId = null;
+
+        // Return to empty state
+        setTimeout(() => {
+            const formContent = document.getElementById("form-content");
+            const emptyState = document.getElementById("empty-state");
+            if (formContent) formContent.style.display = "none";
+            if (emptyState) emptyState.style.display = "flex";
+            if (clarifBtn) {
+                clarifBtn.textContent = "Ask Clarification";
+            }
+        }, 800);
+    }
+
+    function startInactivityTimer() {
+        stopInactivityTimer();
+        
+        timeRemainingSec = inactivityTimeoutMin * 60;
+        
+        warningTimer = setInterval(() => {
+            timeRemainingSec--;
+            
+            const warningEl = document.getElementById("timeout-warning");
+            
+            if (timeRemainingSec <= countdownWarningThresholdSec && timeRemainingSec > 0) {
+                if (warningEl) {
+                    warningEl.textContent = "Warning: Session will time out due to inactivity in " + timeRemainingSec + " seconds...";
+                    warningEl.classList.add("visible");
+                }
+            } else if (timeRemainingSec <= 0) {
+                handleTimeout();
+            } else {
+                if (warningEl) {
+                    warningEl.classList.remove("visible");
+                    warningEl.textContent = "";
+                }
+            }
+        }, 1000);
+    }
+
+    function stopInactivityTimer() {
+        if (warningTimer) {
+            clearInterval(warningTimer);
+            warningTimer = null;
+        }
+        const warningEl = document.getElementById("timeout-warning");
+        if (warningEl) {
+            warningEl.classList.remove("visible");
+            warningEl.textContent = "";
+        }
+    }
+
+    function resetInactivityTimer() {
+        if (currentRequestId) {
+            startInactivityTimer();
+            vscode.postMessage({ type: "interaction_reset" });
+        }
+    }
+
+    function handleTimeout() {
+        stopInactivityTimer();
+        
+        const buttons = document.querySelectorAll("button");
+        buttons.forEach((btn) => { btn.disabled = true; });
+        
+        vscode.postMessage({
+            type: "form_timeout",
+            requestId: currentRequestId
+        });
+        
+        currentRequestId = null;
+        
+        formContent.style.display = "none";
+        emptyState.style.display = "flex";
+    }
+
+    // Bind interaction events to reset timer
+    const interactionEvents = ["click", "keydown", "input", "change", "scroll"];
+    interactionEvents.forEach((event) => {
+        document.addEventListener(event, resetInactivityTimer, { passive: true });
+    });
+
+    // Reload button in empty state
+    const btnEmptyStateReload = document.getElementById("btn-empty-state-reload");
+    if (btnEmptyStateReload) {
+        btnEmptyStateReload.addEventListener("click", () => {
+            const svg = btnEmptyStateReload.querySelector("svg");
+            if (svg) {
+                svg.style.transition = "transform 0.6s cubic-bezier(0.4, 0, 0.2, 1)";
+                svg.style.transform = "rotate(360deg)";
+                setTimeout(() => {
+                    svg.style.transition = "none";
+                    svg.style.transform = "none";
+                }, 600);
+            }
+            vscode.postMessage({ type: "webview_ready" });
+        });
     }
 
     function showFieldError(fieldId, message) {
@@ -429,4 +833,7 @@
         div.textContent = str;
         return div.innerHTML;
     }
+
+    // Notify provider that the webview is ready to receive data
+    vscode.postMessage({ type: "webview_ready" });
 })();

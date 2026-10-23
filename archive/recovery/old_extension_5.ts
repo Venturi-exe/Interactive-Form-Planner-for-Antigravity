@@ -1,0 +1,1 @@
+"        context.globalState.update(\"setupVersion\", \"7\");\n        vscode.window.showInformationMessage(\"Orbit: Auto-setup complete. MCP server registered and GEMINI.md updated to version 7.\");"
