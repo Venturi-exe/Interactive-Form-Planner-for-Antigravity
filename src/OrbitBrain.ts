@@ -8,7 +8,7 @@ export class OrbitBrain {
   private readonly brainRoot: string;
 
   constructor() {
-    this.brainRoot = path.join(os.homedir(), ".orbit-brain");
+    this.brainRoot = process.env.ORBIT_BRAIN_DIR || path.join(os.homedir(), ".orbit-brain");
   }
 
   /** Ensures the root brain directory and global files exist. Called on extension activation. */

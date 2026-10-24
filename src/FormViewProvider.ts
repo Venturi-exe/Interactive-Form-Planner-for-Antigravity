@@ -300,15 +300,11 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
      */
     private async _openPlanningReceipt(projectName: string, taskId: string): Promise<void> {
         const homeDir = os.homedir();
-        const orbitBrainDir = path.join(homeDir, ".orbit-brain");
-        const altBrainDir = "C:\\.orbit-brain";
+        const orbitBrainDir = process.env.ORBIT_BRAIN_DIR || path.join(homeDir, ".orbit-brain");
         
         const locations = [
             path.join(orbitBrainDir, projectName),
             path.join(orbitBrainDir, "projects", projectName),
-            path.join(altBrainDir, projectName),
-            path.join(altBrainDir, "projects", projectName),
-            path.join("C:\\Users\\cesar\\.orbit-brain", projectName),
         ];
 
         let matchedFile: string | null = null;

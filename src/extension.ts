@@ -15,6 +15,7 @@ import { McpBridge } from "./McpBridge.js";
 import { ImpactWatcher } from "./ImpactWatcher.js";
 import { OrbitBrain } from "./OrbitBrain.js";
 import { HubPanelManager } from "./HubPanelManager.js";
+import { updateMcpConfig } from "./core/config.js";
 
 let mcpBridge: McpBridge | undefined;
 let impactWatcher: ImpactWatcher | undefined;
@@ -321,38 +322,22 @@ function runFirstTimeSetup(context: vscode.ExtensionContext): void {
 
     try {
         const geminiDir = path.join(os.homedir(), ".gemini");
-        const antigravityDir = path.join(geminiDir, "antigravity");
+        let antigravityDir = path.join(geminiDir, "antigravity");
+        if (!fs.existsSync(antigravityDir) && fs.existsSync(path.join(geminiDir, "antigravity-ide"))) {
+            antigravityDir = path.join(geminiDir, "antigravity-ide");
+        }
         
         if (!fs.existsSync(geminiDir)) fs.mkdirSync(geminiDir, { recursive: true });
         if (!fs.existsSync(antigravityDir)) fs.mkdirSync(antigravityDir, { recursive: true });
 
-        // 1. Configure MCP Server
+        // 1. Configure MCP Server safely
         const mcpConfigPath = path.join(antigravityDir, "mcp_config.json");
-        let mcpConfig: any = { mcpServers: {} };
-        
-        if (fs.existsSync(mcpConfigPath)) {
-            try {
-                const raw = fs.readFileSync(mcpConfigPath, "utf-8");
-                mcpConfig = JSON.parse(raw);
-                if (!mcpConfig.mcpServers) mcpConfig.mcpServers = {};
-            } catch (e) {
-                // If it exists but is empty or invalid, overwrite
-            }
+        const serverPath = path.join(context.extensionPath, "out", "mcp-server", "index.js");
+        const configResult = updateMcpConfig(mcpConfigPath, serverPath);
+        if (!configResult.success) {
+            vscode.window.showErrorMessage(`Orbit: ${configResult.error}`);
+            return;
         }
-
-        const serverPath = path.join(context.extensionPath, "out", "mcp-server", "index.js").replace(/\\/g, "/");
-        
-        // Remove old server key if present
-        if (mcpConfig.mcpServers["antigravity-planner"]) {
-            delete mcpConfig.mcpServers["antigravity-planner"];
-        }
-
-        // Register new orbit server
-        mcpConfig.mcpServers["orbit"] = {
-            command: "node",
-            args: [serverPath]
-        };
-        fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
 
         // 2. Configure GEMINI.md
         const geminiMdPath = path.join(geminiDir, "GEMINI.md");
