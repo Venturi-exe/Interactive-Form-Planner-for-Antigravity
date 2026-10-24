@@ -16,6 +16,8 @@ import { ImpactWatcher } from "./ImpactWatcher.js";
 import { OrbitBrain } from "./OrbitBrain.js";
 import { HubPanelManager } from "./HubPanelManager.js";
 import { updateMcpConfig } from "./core/config.js";
+import { detectHost } from "./core/host.js";
+import { injectOrbitRules } from "./core/rules.js";
 
 let mcpBridge: McpBridge | undefined;
 let impactWatcher: ImpactWatcher | undefined;
@@ -42,7 +44,9 @@ export function activate(context: vscode.ExtensionContext): void {
     const formViewProvider = new FormViewProvider(context.extensionUri, context, brain);
 
     // Run auto-setup for MCP and GEMINI.md
-    runFirstTimeSetup(context);
+    runFirstTimeSetup(context).catch((err) => {
+        console.error("Orbit auto-setup failed:", err);
+    });
 
     // Register the webview view provider for the sidebar
     context.subscriptions.push(
@@ -313,34 +317,39 @@ export function deactivate(): void {
 }
 
 /**
- * Automatically configures the MCP server and GEMINI.md rule on first install.
+ * Automatically configures the MCP server and GEMINI.md rule on first install or update.
  */
-function runFirstTimeSetup(context: vscode.ExtensionContext): void {
-    if (context.globalState.get("setupVersion") === "8") {
+async function runFirstTimeSetup(context: vscode.ExtensionContext): Promise<void> {
+    if (context.globalState.get("setupVersion") === "9") {
         return;
     }
 
     try {
-        const geminiDir = path.join(os.homedir(), ".gemini");
-        let antigravityDir = path.join(geminiDir, "antigravity");
-        if (!fs.existsSync(antigravityDir) && fs.existsSync(path.join(geminiDir, "antigravity-ide"))) {
-            antigravityDir = path.join(geminiDir, "antigravity-ide");
-        }
-        
-        if (!fs.existsSync(geminiDir)) fs.mkdirSync(geminiDir, { recursive: true });
-        if (!fs.existsSync(antigravityDir)) fs.mkdirSync(antigravityDir, { recursive: true });
+        const host = detectHost(vscode.env.appName);
 
-        // 1. Configure MCP Server safely
-        const mcpConfigPath = path.join(antigravityDir, "mcp_config.json");
-        const serverPath = path.join(context.extensionPath, "out", "mcp-server", "index.js");
-        const configResult = updateMcpConfig(mcpConfigPath, serverPath);
+        // 1. Stable server copy in globalStorageUri to keep server path stable across updates
+        const stableDir = path.join(context.globalStorageUri.fsPath, "mcp-server");
+        if (!fs.existsSync(stableDir)) {
+            await fs.promises.mkdir(stableDir, { recursive: true });
+        }
+        const sourceServerPath = path.join(context.extensionPath, "out", "mcp-server", "index.js");
+        const stableServerPath = path.join(stableDir, "index.js");
+
+        if (fs.existsSync(sourceServerPath)) {
+            await fs.promises.copyFile(sourceServerPath, stableServerPath);
+        }
+
+        // 2. Configure MCP server in host mcp_config.json
+        if (!fs.existsSync(host.configDir)) {
+            await fs.promises.mkdir(host.configDir, { recursive: true });
+        }
+        const configResult = updateMcpConfig(host.mcpConfigPath, stableServerPath);
         if (!configResult.success) {
             vscode.window.showErrorMessage(`Orbit: ${configResult.error}`);
             return;
         }
 
-        // 2. Configure GEMINI.md
-        const geminiMdPath = path.join(geminiDir, "GEMINI.md");
+        // 3. Configure GEMINI.md rules with marker boundaries
         const alignmentRule = `
 ## Orbit Planner: Mandatory Usage Policy
 
@@ -459,7 +468,7 @@ Merged reports MUST use this structure:
 
 After each step, emit a single-line progress note in chat:
 \\\`\\\`\\\`
-✅ [step completed] — [files affected]
+[x] [step completed] - [files affected]
 \\\`\\\`\\\`
 
 At task completion, the full report goes into the Cartograph via \\\`write_impact_report\\\`. In chat, emit only a short pointer:
@@ -474,7 +483,7 @@ Full walkthrough submitted to Cartograph.
 
 Every \\\`write_impact_report\\\` call MUST populate \\\`planningContext.notes\\\` with a complete walkthrough of the agent's work. This is the primary report surface shown in the Cartograph Hub under the DECISIONS & NOTES tab.
 
-The \\\`notes\\\` field MUST contain all 8 sections below (structured as a readable walkthrough narrative). Use section headers. Write prose under each section — not bullet-only summaries. Omit a section only if it has zero meaningful content.
+The \\\`notes\\\` field MUST contain all 8 sections below (structured as a readable walkthrough narrative). Use section headers. Write prose under each section - not bullet-only summaries. Omit a section only if it has zero meaningful content.
 
 **Required sections for \\\`planningContext.notes\\\`:**
 
@@ -511,42 +520,13 @@ What was completed. What changed for the user. Remaining limitations, risks, or 
 - \\\`questionsAsked\\\`: alignment questions posed, even if answered
 - \\\`outOfScope\\\`: items explicitly not addressed
 
-**Per-file \\\`changes[].description\\\`**: For each changed file, write a full sentence explaining what changed and why — not just a label. This appears in the Cartograph Inspector when the file node is selected.
+**Per-file \\\`changes[].description\\\`**: For each changed file, write a full sentence explaining what changed and why - not just a label. This appears in the Cartograph Inspector when the file node is selected.
 `;
-        
-        // Always overwrite or update rules to ensure Orbit is active
-        if (fs.existsSync(geminiMdPath)) {
-            let currentContent = fs.readFileSync(geminiMdPath, "utf-8");
-            
-            // Clean up any old orbit rules blocks if they exist to overwrite with fresh ones
-            if (currentContent.includes("## Orbit Planner") || currentContent.includes("## Orbit Memory System")) {
-                currentContent = currentContent.replace(/## Orbit Planner: Mandatory Usage Policy[\s\S]*?(?=##|$)/, "");
-                currentContent = currentContent.replace(/## Deep Prompt Refining[\s\S]*?(?=##|$)/, "");
-                currentContent = currentContent.replace(/## Planning Receipt[\s\S]*?(?=##|$)/, "");
-                currentContent = currentContent.replace(/## Orbit Planner: Clarification Rule[\s\S]*?(?=##|$)/, "");
-                currentContent = currentContent.replace(/## Orbit Planner: Timeout Rule[\s\S]*?(?=##|$)/, "");
-                currentContent = currentContent.replace(/## Orbit Cartograph: Impact Tracking Rule[\s\S]*?(?=##|$)/, "");
-                currentContent = currentContent.replace(/## Orbit Cartograph: Rich Planning Context and Trigger Rules[\s\S]*?(?=##|$)/, "");
-                currentContent = currentContent.replace(/## Orbit Memory System[\s\S]*?(?=##|$)/, "");
-                currentContent = currentContent.replace(/## Orbit Cartograph: Auto-Merge Protocol[\s\S]*?(?=##|$)/, "");
-                currentContent = currentContent.replace(/## Orbit Cartograph: Organize All Reports[\s\S]*?(?=##|$)/, "");
-                currentContent = currentContent.replace(/## Orbit Cartograph: Merged Report Format[\s\S]*?(?=##|$)/, "");
-                currentContent = currentContent.replace(/## Orbit Cartograph: Artifact Protocol[\s\S]*?(?=##|$)/, "");
-                currentContent = currentContent.replace(/## Walkthrough Report Format[\s\S]*?(?=##|$)/, "");
-            }
-            if (currentContent.includes("pre_execution_form_planner")) {
-                currentContent = currentContent.replace(/## Planning Rule[\s\S]*?(?=##|$)/, "");
-                currentContent = currentContent.replace(/## Deep Prompt Refining[\s\S]*?(?=##|$)/, "");
-                currentContent = currentContent.replace(/## Post Planning Analysis[\s\S]*?(?=##|$)/, "");
-            }
 
-            fs.writeFileSync(geminiMdPath, currentContent.trim() + "\n\n" + alignmentRule.trim() + "\n");
-        } else {
-            fs.writeFileSync(geminiMdPath, "# Agent Instructions\n\n" + alignmentRule.trim() + "\n");
-        }
+        await injectOrbitRules(host.geminiMdPath, alignmentRule);
 
-        context.globalState.update("setupVersion", "8");
-        vscode.window.showInformationMessage("Orbit: Auto-setup complete. MCP server registered and GEMINI.md updated to version 8.");
+        context.globalState.update("setupVersion", "9");
+        vscode.window.showInformationMessage("Orbit: Auto-setup complete. MCP server registered and GEMINI.md updated to version 9.");
     } catch (error) {
         console.error("Auto-setup failed:", error);
     }
