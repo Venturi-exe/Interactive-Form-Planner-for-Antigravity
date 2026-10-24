@@ -112,4 +112,47 @@ describe("runUninstall and isOrbitServerEntry (N-01, N-02)", () => {
         expect(res.removedRules).toBe(false);
         expect(fs.readFileSync(mockGeminiMd, "utf-8")).toContain("ORBIT_START_v1");
     });
+
+    it("running uninstall hook with no options when config has Antigravity entry does not remove anything (M-01)", async () => {
+        const antigravityStoragePath = "C:/Users/test/AppData/Roaming/Antigravity/User/globalStorage/vntrcorp.orbit/mcp-server/index.js";
+        const configWithAntigravity = `{
+            "mcpServers": {
+                "orbit": {
+                    "command": "node",
+                    "args": ["${antigravityStoragePath}"]
+                }
+            }
+        }`;
+        fs.writeFileSync(mockMcpConfig, configWithAntigravity, "utf-8");
+        fs.writeFileSync(mockGeminiMd, "<!-- ORBIT_START_v1 -->\nrules\n<!-- ORBIT_END_v1 -->\n", "utf-8");
+
+        // Simulate stock VS Code extensions directory caller
+        const res = await runUninstall({
+            callerDir: "C:/Users/test/.vscode/extensions/vntrcorp.orbit-0.4.0/out",
+        });
+
+        expect(res.success).toBe(true);
+        expect(res.removedServer).toBe(false);
+        expect(res.removedRules).toBe(false);
+
+        const configAfter = JSON.parse(fs.readFileSync(mockMcpConfig, "utf-8"));
+        expect(configAfter.mcpServers.orbit).toBeDefined();
+        expect(configAfter.mcpServers.orbit.args[0]).toBe(antigravityStoragePath);
+
+        const geminiMdAfter = fs.readFileSync(mockGeminiMd, "utf-8");
+        expect(geminiMdAfter).toContain("ORBIT_START_v1");
+    });
+
+    it("isOrbitServerEntry strictly enforces directory boundaries without prefix collisions (M-01, M-06)", () => {
+        const baseStorage = path.join(tempDir, "vntrcorp.orbit");
+        const similarStorage = path.join(tempDir, "vntrcorp.orbit-other");
+
+        // Substring prefix collision test
+        const falseEntry = { args: [path.join(similarStorage, "mcp-server", "index.js")] };
+        expect(isOrbitServerEntry("orbit", falseEntry, baseStorage)).toBe(false);
+
+        // Genuine subpath
+        const trueEntry = { args: [path.join(baseStorage, "mcp-server", "index.js")] };
+        expect(isOrbitServerEntry("orbit", trueEntry, baseStorage)).toBe(true);
+    });
 });

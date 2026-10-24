@@ -8,11 +8,13 @@ import * as path from "path";
 import * as os from "os";
 import * as jsonc from "jsonc-parser";
 import { detectHost } from "./core/host.js";
+import { isSubpath } from "./core/paths.js";
 import { removeOrbitRules } from "./core/rules.js";
 import { writeAtomic, createRollingBackup } from "./core/fsx.js";
 
 export interface UninstallOptions {
     appName?: string;
+    callerDir?: string;
     globalStoragePath?: string;
     mcpConfigPath?: string;
     geminiMdPath?: string;
@@ -26,15 +28,16 @@ export interface UninstallResult {
 }
 
 /**
- * Checks whether an MCP server entry belongs specifically to Orbit (N-01).
+ * Checks whether an MCP server entry belongs specifically to Orbit (N-01, M-01, M-06).
  * Only keys "orbit" and "antigravity-planner" are candidates.
- * Checks that args[0] points inside a known Orbit server directory.
+ * Checks that args[0] points inside a known Orbit server directory for the calling host.
  */
 export function isOrbitServerEntry(
     serverKey: string,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     serverEntry: any,
-    globalStoragePath?: string
+    globalStoragePath?: string,
+    hostIsAntigravity?: boolean
 ): boolean {
     if (serverKey !== "orbit" && serverKey !== "antigravity-planner") {
         return false;
@@ -48,30 +51,45 @@ export function isOrbitServerEntry(
         return false;
     }
 
-    const arg0 = path.resolve(args[0]).toLowerCase();
-    const legacyFormsPath = path.resolve(os.homedir(), ".antigravity-forms").toLowerCase();
+    const arg0 = path.resolve(args[0]);
+    const legacyFormsPath = path.resolve(os.homedir(), ".antigravity-forms");
 
-    // Check if target points to caller's globalStorage
+    // Check if target points to caller's globalStorage with strict boundary (M-01, M-06)
     if (globalStoragePath) {
-        const resolvedStorage = path.resolve(globalStoragePath).toLowerCase();
-        if (arg0.startsWith(resolvedStorage)) {
+        if (isSubpath(arg0, globalStoragePath)) {
             return true;
         }
     }
 
-    // Check if target points to legacy ~/.antigravity-forms
-    if (arg0.startsWith(legacyFormsPath)) {
+    // Check if target points to legacy ~/.antigravity-forms (only if host is Antigravity or unspecified)
+    if (hostIsAntigravity !== false && isSubpath(arg0, legacyFormsPath)) {
         return true;
     }
 
-    // Fallback check for standalone uninstall execution (where globalStoragePath is not injected)
+    // Fallback check for standalone uninstall execution (where globalStoragePath is not injected) (M-01)
     if (!globalStoragePath) {
-        const isGlobalStoragePath =
-            arg0.includes("globalstorage") &&
-            (arg0.endsWith("index.js") || arg0.includes("mcp-server")) &&
-            (arg0.includes("orbit") || arg0.includes("antigravity-interactive-form-planner") || arg0.includes("vntrcorp"));
-        if (isGlobalStoragePath) {
-            return true;
+        const lowerArg0 = arg0.toLowerCase();
+        const isMcpBundle =
+            (lowerArg0.endsWith("index.js") || lowerArg0.includes("mcp-server")) &&
+            (lowerArg0.includes("orbit") || lowerArg0.includes("antigravity-interactive-form-planner") || lowerArg0.includes("vntrcorp"));
+
+        if (isMcpBundle) {
+            const isAntigravityStorage = lowerArg0.includes("antigravity");
+            // If caller is stock VS Code (hostIsAntigravity === false), NEVER match an Antigravity storage entry
+            if (hostIsAntigravity === false) {
+                if (isAntigravityStorage) {
+                    return false;
+                }
+                // Only match if it points to stock VS Code storage
+                if (lowerArg0.includes("globalstorage") && (lowerArg0.includes("code") || lowerArg0.includes(".vscode"))) {
+                    return true;
+                }
+            } else if (hostIsAntigravity === true) {
+                // If caller is Antigravity, match Antigravity storage
+                if (lowerArg0.includes("globalstorage") && isAntigravityStorage) {
+                    return true;
+                }
+            }
         }
     }
 
@@ -87,14 +105,15 @@ export async function runUninstall(options?: UninstallOptions): Promise<Uninstal
 
     try {
         console.log("[Orbit Uninstall] Starting clean removal...");
-        const host = detectHost(options?.appName);
+        const callerDir = options?.callerDir || __dirname;
+        const host = detectHost(options?.appName, callerDir);
         const mcpConfigPath = options?.mcpConfigPath || host.mcpConfigPath;
         const geminiMdPath = options?.geminiMdPath || host.geminiMdPath;
         const globalStoragePath = options?.globalStoragePath;
 
         // 1. Remove Orbit rules block from GEMINI.md
-        // Only remove if host is Antigravity or options.appName was not supplied (CLI uninstall) (N-02)
-        const shouldCleanRules = options?.appName ? host.isAntigravity : true;
+        // Only remove if host is Antigravity (M-01: stock VS Code must NEVER remove GEMINI.md rules)
+        const shouldCleanRules = host.isAntigravity;
         if (shouldCleanRules && fs.existsSync(geminiMdPath)) {
             try {
                 const removed = await removeOrbitRules(geminiMdPath);
@@ -130,7 +149,7 @@ export async function runUninstall(options?: UninstallOptions): Promise<Uninstal
                     // Only candidates are "orbit" and "antigravity-planner" (N-01)
                     for (const key of ["orbit", "antigravity-planner"]) {
                         const entry = config.mcpServers[key];
-                        if (entry && isOrbitServerEntry(key, entry, globalStoragePath)) {
+                        if (entry && isOrbitServerEntry(key, entry, globalStoragePath, host.isAntigravity)) {
                             // Backup before modifying using rolling backup (N-01: keep last 3)
                             if (!backedUp) {
                                 await createRollingBackup(mcpConfigPath, 3);
@@ -140,7 +159,6 @@ export async function runUninstall(options?: UninstallOptions): Promise<Uninstal
                             const edits = jsonc.modify(updatedRaw, ["mcpServers", key], undefined, formatOpts);
                             updatedRaw = jsonc.applyEdits(updatedRaw, edits);
                             result.removedServer = true;
-                            console.log(`[Orbit Uninstall] Removed ${key} MCP server from mcp_config.json`);
                         }
                     }
 

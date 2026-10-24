@@ -235,3 +235,18 @@ export function redactPath(filePath: string): string {
     .replace(/\/Users\/[^\/]+/gi, '~')
     .replace(/\/home\/[^\/]+/gi, '~');
 }
+
+/**
+ * Safely checks whether childPath is strictly equal to or inside parentPath (M-01, M-06).
+ * Only lowercases on win32 to prevent false equivalences on case-sensitive filesystems.
+ * Enforces boundary boundaries via path.relative so 'vntrcorp.orbit' never matches 'vntrcorp.orbit-foo'.
+ */
+export function isSubpath(childPath: string, parentPath: string): boolean {
+  if (!childPath || !parentPath) return false;
+  const isWin = process.platform === 'win32';
+  const parentNorm = isWin ? path.resolve(parentPath).toLowerCase() : path.resolve(parentPath);
+  const childNorm = isWin ? path.resolve(childPath).toLowerCase() : path.resolve(childPath);
+
+  const rel = path.relative(parentNorm, childNorm);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}

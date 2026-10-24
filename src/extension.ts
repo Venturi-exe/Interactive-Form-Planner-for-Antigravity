@@ -18,7 +18,8 @@ import { OrbitBrain } from "./OrbitBrain.js";
 import { HubPanelManager } from "./HubPanelManager.js";
 import { updateMcpConfig } from "./core/config.js";
 import { detectHost } from "./core/host.js";
-import { injectOrbitRules, getOrbitRulesTemplate } from "./core/rules.js";
+import { injectOrbitRules, getOrbitRulesTemplate, removeOrbitRules } from "./core/rules.js";
+import { isSubpath } from "./core/paths.js";
 import { writeAtomic } from "./core/fsx.js";
 import { runUninstall } from "./uninstall.js";
 import * as jsonc from "jsonc-parser";
@@ -353,7 +354,21 @@ The goal is to demonstrate all the features of the Orbit pre-execution planner a
                     if (res.removedServer || res.removedRules) {
                         vscode.window.showInformationMessage("Orbit: Integration removed from ~/.gemini.");
                     } else {
-                        vscode.window.showInformationMessage("Orbit: No active Orbit integration found to remove.");
+                        // M-04: Check if an Orbit entry exists pointing to a foreign host's storage path
+                        let foreignFound = false;
+                        const host = detectHost(vscode.env.appName);
+                        if (fs.existsSync(host.mcpConfigPath)) {
+                            try {
+                                const raw = fs.readFileSync(host.mcpConfigPath, "utf-8");
+                                const parsed = jsonc.parse(raw);
+                                foreignFound = Boolean(parsed?.mcpServers?.orbit || parsed?.mcpServers?.["antigravity-planner"]);
+                            } catch { /* skip */ }
+                        }
+                        if (foreignFound) {
+                            vscode.window.showWarningMessage("Orbit: Found an Orbit registration pointing to a different editor storage path. Remove it from that editor or manually update mcp_config.json.");
+                        } else {
+                            vscode.window.showInformationMessage("Orbit: No active Orbit integration found to remove.");
+                        }
                     }
                 } else {
                     vscode.window.showErrorMessage(`Orbit: Failed to remove integration (${res.reason || "unknown error"}).`);
@@ -464,11 +479,10 @@ export async function runFirstTimeSetup(context: vscode.ExtensionContext, force 
                         const parsed = jsonc.parse(raw);
                         const orbitEntry = parsed?.mcpServers?.orbit || parsed?.mcpServers?.["antigravity-planner"];
                         if (orbitEntry && Array.isArray(orbitEntry.args) && typeof orbitEntry.args[0] === "string") {
-                            const arg0 = path.resolve(orbitEntry.args[0]).toLowerCase();
-                            const myStorage = path.resolve(context.globalStorageUri.fsPath).toLowerCase();
-                            if (arg0.startsWith(myStorage)) {
+                            const arg0 = path.resolve(orbitEntry.args[0]);
+                            if (isSubpath(arg0, context.globalStorageUri.fsPath)) {
                                 const cleanupChoice = await vscode.window.showInformationMessage(
-                                    "Orbit: Detected obsolete Orbit MCP server registered in ~/.gemini from a previous installation in this editor. Clean it up?",
+                                    "Orbit: Detected obsolete Orbit MCP server and assistant guidelines registered in ~/.gemini from a previous installation in this editor. Clean them up?",
                                     "Clean Up",
                                     "Keep"
                                 );
@@ -477,7 +491,21 @@ export async function runFirstTimeSetup(context: vscode.ExtensionContext, force 
                                         appName: vscode.env.appName,
                                         globalStoragePath: context.globalStorageUri.fsPath,
                                     });
-                                    vscode.window.showInformationMessage("Orbit: Legacy server registration cleaned up.");
+
+                                    // M-04: If no other Orbit server remains in mcp_config.json, clean up GEMINI.md rules
+                                    let hasOtherOrbitServer = false;
+                                    if (fs.existsSync(host.mcpConfigPath)) {
+                                        try {
+                                            const checkRaw = await fs.promises.readFile(host.mcpConfigPath, "utf-8");
+                                            const checkParsed = jsonc.parse(checkRaw);
+                                            hasOtherOrbitServer = Boolean(checkParsed?.mcpServers?.orbit || checkParsed?.mcpServers?.["antigravity-planner"]);
+                                        } catch { /* skip */ }
+                                    }
+                                    if (!hasOtherOrbitServer && fs.existsSync(host.geminiMdPath)) {
+                                        await removeOrbitRules(host.geminiMdPath);
+                                    }
+
+                                    vscode.window.showInformationMessage("Orbit: Legacy server registration and assistant guidelines cleaned up.");
                                 }
                             }
                         }

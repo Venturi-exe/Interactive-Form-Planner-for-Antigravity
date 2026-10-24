@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as crypto from "crypto";
 import { getBrainRoot, BRAIN_DIRS, LIMITS } from "./constants.js";
-import { ensureDirSafe } from "./fsx.js";
+import { ensureDirSafe, writeAtomic } from "./fsx.js";
 
 export interface LockOptions {
     staleMs?: number;
@@ -29,6 +29,7 @@ interface LockMetadata {
 
 /**
  * Acquires a cross-process file-based lock with token ownership and heartbeat protection.
+ * Hardened against corrupt/empty file deadlocks (M-02) and stale-steal races (M-03).
  */
 export async function acquireLock(
     lockName: string,
@@ -57,7 +58,18 @@ export async function acquireLock(
             await fileHandle.writeFile(JSON.stringify(meta), "utf-8");
             await fileHandle.close();
 
-            // Heartbeat timer: refresh ts every heartbeatIntervalMs while lock is held (N-03)
+            // M-03: Post-acquire verification. Ensure token was written without interference.
+            try {
+                const checkContent = await fs.promises.readFile(lockPath, "utf-8");
+                const checkMeta = JSON.parse(checkContent) as LockMetadata;
+                if (checkMeta.token !== token) {
+                    continue;
+                }
+            } catch {
+                continue;
+            }
+
+            // Heartbeat timer: refresh ts every heartbeatIntervalMs while lock is held (N-03, M-02, M-03)
             const heartbeatTimer = setInterval(async () => {
                 try {
                     if (fs.existsSync(lockPath)) {
@@ -65,7 +77,8 @@ export async function acquireLock(
                         const currentMeta = JSON.parse(content) as LockMetadata;
                         if (currentMeta.token === token) {
                             currentMeta.ts = Date.now();
-                            await fs.promises.writeFile(lockPath, JSON.stringify(currentMeta), "utf-8");
+                            // M-02 & M-03: Use writeAtomic to prevent truncating lock file to 0 bytes
+                            await writeAtomic(lockPath, JSON.stringify(currentMeta));
                         }
                     }
                 } catch { /* ignore heartbeat race errors */ }
@@ -85,17 +98,41 @@ export async function acquireLock(
         } catch (err: unknown) {
             const code = (err as { code?: string })?.code;
             if (code === "EEXIST") {
-                // Check if existing lock is stale
+                // Check if existing lock is stale (M-02, M-03)
                 try {
-                    const content = await fs.promises.readFile(lockPath, "utf-8");
-                    const meta = JSON.parse(content) as LockMetadata;
-                    const lastActive = meta.ts || meta.acquiredAt || 0;
-                    if (Date.now() - lastActive > staleMs) {
-                        // Stale lock detected, remove and immediately retry
+                    let isStale = false;
+                    try {
+                        const content = await fs.promises.readFile(lockPath, "utf-8");
+                        const meta = JSON.parse(content) as LockMetadata;
+                        const lastActive = meta.ts || meta.acquiredAt || 0;
+                        if (Date.now() - lastActive > staleMs) {
+                            isStale = true;
+                        }
+                    } catch {
+                        // M-02: Corrupted or empty (0-byte) lock file. Fall back to mtimeMs staleness check
                         try {
-                            await fs.promises.unlink(lockPath);
-                        } catch { /* already unlinked */ }
-                        continue;
+                            const stat = await fs.promises.stat(lockPath);
+                            if (Date.now() - stat.mtimeMs > staleMs) {
+                                isStale = true;
+                            }
+                        } catch {
+                            // File disappeared in the interim
+                        }
+                    }
+
+                    if (isStale) {
+                        // M-03: Safe Stale Steal via atomic rename to a unique path.
+                        // Only the process that succeeds in renaming reclaims the lock.
+                        const stealPath = `${lockPath}.steal.${crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
+                        try {
+                            await fs.promises.rename(lockPath, stealPath);
+                            try {
+                                await fs.promises.unlink(stealPath);
+                            } catch { /* already unlinked */ }
+                            continue;
+                        } catch {
+                            // Another process won the rename or lock was unlinked
+                        }
                     }
                 } catch {
                     // Lock file might have been released in the interim, continue to retry

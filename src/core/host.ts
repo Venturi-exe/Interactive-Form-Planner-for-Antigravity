@@ -13,8 +13,9 @@ export interface HostInfo {
 /**
  * Detects the host environment and configuration paths.
  * Supports Antigravity IDE (~/.gemini/antigravity-ide) and Antigravity CLI (~/.gemini/antigravity).
+ * Supports detecting host environment from caller directory when appName is not available (M-01).
  */
-export function detectHost(appName?: string): HostInfo {
+export function detectHost(appName?: string, callerDir?: string): HostInfo {
     const homeDir = os.homedir();
     const geminiDir = path.join(homeDir, ".gemini");
 
@@ -23,9 +24,18 @@ export function detectHost(appName?: string): HostInfo {
         configDir = path.join(geminiDir, "antigravity");
     }
 
-    // V-02 Minimal Host Gate: Strictly rely on appName containing "antigravity".
-    // Do NOT treat standard VS Code with Gemini CLI installed as Antigravity host.
-    const isAntigravity = Boolean(appName && /antigravity/i.test(appName));
+    // V-02 & M-01 Minimal Host Gate: Strictly rely on appName or callerDir containing "antigravity".
+    let isAntigravity = false;
+    if (appName) {
+        isAntigravity = /antigravity/i.test(appName);
+    } else if (callerDir) {
+        const norm = callerDir.toLowerCase();
+        if (norm.includes("antigravity")) {
+            isAntigravity = true;
+        } else if (norm.includes(".vscode") || norm.includes("code")) {
+            isAntigravity = false;
+        }
+    }
 
     return {
         isAntigravity,

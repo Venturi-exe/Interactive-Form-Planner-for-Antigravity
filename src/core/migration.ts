@@ -27,6 +27,11 @@ interface CopiedFileMapping {
     srcPath: string;
     destPath: string;
     size: number;
+    hash: string;
+}
+
+function computeSha256(buf: Buffer): string {
+    return crypto.createHash("sha256").update(buf).digest("hex");
 }
 
 const EXCLUDED_DIRS = new Set([
@@ -92,7 +97,8 @@ async function copyDirectoryRecursive(src: string, dest: string): Promise<void> 
 }
 
 /**
- * Safely copies a single file, preserving content on collision without overwriting (N-10).
+ * Safely copies a single file, preserving content on collision without overwriting (N-10, M-05).
+ * Uses SHA-256 hash checks and idempotent collision handling across retries.
  */
 async function copyFileSafe(
     srcPath: string,
@@ -102,28 +108,40 @@ async function copyFileSafe(
     collisions: string[]
 ): Promise<void> {
     const srcStat = await fs.promises.stat(srcPath);
+    const srcBuf = await fs.promises.readFile(srcPath);
+    const srcHash = computeSha256(srcBuf);
     let targetDest = destPath;
 
     if (fs.existsSync(destPath)) {
-        const srcBuf = await fs.promises.readFile(srcPath);
         const destBuf = await fs.promises.readFile(destPath);
+        const destHash = computeSha256(destBuf);
 
-        if (srcBuf.equals(destBuf)) {
+        if (srcHash === destHash) {
             // Identical contents, skip re-writing
-            mappings.push({ srcPath, destPath, size: srcStat.size });
+            mappings.push({ srcPath, destPath, size: srcStat.size, hash: srcHash });
             return;
         }
 
-        // N-10: On collision with different content, write <name>.<srcdir>.<ext>
+        // N-10 & M-05: On collision with different content, write <name>.<srcdir>.<ext>
         const parsed = path.parse(destPath);
         const collisionName = `${parsed.name}.${sourceDirName}${parsed.ext}`;
         targetDest = path.join(parsed.dir, collisionName);
+
+        // M-05: Idempotency check across retries. If collision target already exists and has identical hash, skip re-writing
+        if (fs.existsSync(targetDest)) {
+            const existingCollisionBuf = await fs.promises.readFile(targetDest);
+            const existingCollisionHash = computeSha256(existingCollisionBuf);
+            if (existingCollisionHash === srcHash) {
+                mappings.push({ srcPath, destPath: targetDest, size: srcStat.size, hash: srcHash });
+                return;
+            }
+        }
+
         collisions.push(`Collision: '${srcPath}' differed from '${destPath}'. Preserved as '${collisionName}'.`);
     }
 
-    const content = await fs.promises.readFile(srcPath);
-    await writeAtomic(targetDest, content);
-    mappings.push({ srcPath, destPath: targetDest, size: srcStat.size });
+    await writeAtomic(targetDest, srcBuf);
+    mappings.push({ srcPath, destPath: targetDest, size: srcStat.size, hash: srcHash });
 }
 
 /**
@@ -278,7 +296,7 @@ export async function migrateToLayoutV3(
 
                 const mappings = await copyProjectToLayoutV3WithManifest(srcDir, targetDir, dirName, collisions);
 
-                // Per-file manifest verification: each copied file must exist and match expected size
+                // Per-file manifest verification: each copied file must exist and match expected size and SHA-256 hash (N-04, M-05)
                 let folderVerified = true;
                 for (const item of mappings) {
                     if (!fs.existsSync(item.destPath)) {
@@ -290,6 +308,13 @@ export async function migrateToLayoutV3(
                     if (st.size !== item.size) {
                         folderVerified = false;
                         journal.errors.push(`Manifest verification failed: size mismatch for '${item.destPath}' (expected ${item.size}, got ${st.size})`);
+                        break;
+                    }
+                    const destBuf = await fs.promises.readFile(item.destPath);
+                    const destHash = computeSha256(destBuf);
+                    if (destHash !== item.hash) {
+                        folderVerified = false;
+                        journal.errors.push(`Manifest verification failed: hash mismatch for '${item.destPath}'`);
                         break;
                     }
                 }
