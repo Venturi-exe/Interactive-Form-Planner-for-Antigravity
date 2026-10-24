@@ -9,18 +9,14 @@
 import * as vscode from "vscode";
 import * as fs from "fs";
 import * as path from "path";
-import * as os from "os";
 import { FormViewProvider } from "./FormViewProvider.js";
 import type { AlignmentFormRequest, AlignmentFormResponse } from "./types.js";
-
-const IPC_DIR = path.join(os.homedir(), ".antigravity-forms");
-const REQUESTS_DIR = path.join(IPC_DIR, "requests");
-const RESPONSES_DIR = path.join(IPC_DIR, "responses");
+import { getIpcRoot, IPC_DIRS } from "./core/constants.js";
+import { ensureDirSafe, writeJsonAtomic, readJsonSafe } from "./core/fsx.js";
 
 /**
  * Watches the IPC requests directory for planning form requests from the MCP server.
- * When a request file appears, renders the form via FormViewProvider and writes
- * the response back to the responses directory for the MCP server to pick up.
+ * Implements IPC v2 atomic claiming, cancellation, and response delivery.
  */
 export class McpBridge {
     private _pollInterval: ReturnType<typeof setInterval> | undefined;
@@ -31,14 +27,29 @@ export class McpBridge {
         this._outputChannel = vscode.window.createOutputChannel("Orbit");
     }
 
+    private get _dirs() {
+        const root = getIpcRoot();
+        return {
+            requests: path.join(root, IPC_DIRS.REQUESTS),
+            claimed: path.join(root, IPC_DIRS.CLAIMED),
+            cancelled: path.join(root, IPC_DIRS.CANCELLED),
+            responses: path.join(root, IPC_DIRS.RESPONSES),
+            failed: path.join(root, IPC_DIRS.FAILED),
+        };
+    }
+
     /**
      * Starts watching for planning request files.
      */
-    public start(): void {
-        fs.mkdirSync(REQUESTS_DIR, { recursive: true });
-        fs.mkdirSync(RESPONSES_DIR, { recursive: true });
+    public async start(): Promise<void> {
+        const dirs = this._dirs;
+        await ensureDirSafe(dirs.requests);
+        await ensureDirSafe(dirs.claimed);
+        await ensureDirSafe(dirs.cancelled);
+        await ensureDirSafe(dirs.responses);
+        await ensureDirSafe(dirs.failed);
 
-        this._outputChannel.appendLine("Watching for planning requests...");
+        this._outputChannel.appendLine("Orbit IPC v2: Watching for planning requests...");
         this._pollInterval = setInterval(() => this._checkForRequests(), 500);
     }
 
@@ -53,12 +64,13 @@ export class McpBridge {
     }
 
     /**
-     * Scans the requests directory for new form request files.
+     * Scans the requests directory for new form request files and atomically claims them.
      */
     private async _checkForRequests(): Promise<void> {
+        const dirs = this._dirs;
         let files: string[];
         try {
-            files = fs.readdirSync(REQUESTS_DIR).filter((f) => f.endsWith(".json"));
+            files = (await fs.promises.readdir(dirs.requests)).filter((f) => f.endsWith(".json"));
         } catch {
             return;
         }
@@ -66,49 +78,73 @@ export class McpBridge {
         for (const file of files) {
             const requestId = file.replace(".json", "");
 
-            // Skip if already being processed
             if (this._processing.has(requestId)) continue;
             this._processing.add(requestId);
 
-            const filePath = path.join(REQUESTS_DIR, file);
+            const requestPath = path.join(dirs.requests, file);
+            const claimedPath = path.join(dirs.claimed, file);
 
             try {
-                const content = fs.readFileSync(filePath, "utf-8");
-                const request: AlignmentFormRequest = JSON.parse(content);
-
-                this._outputChannel.appendLine(
-                    `Planning request: ${request.requestId} "${request.title}"`
-                );
-
-                // Delete the request file now that we have it in memory
+                // IPC v2: Atomic claim via rename
                 try {
-                    fs.unlinkSync(filePath);
+                    await fs.promises.rename(requestPath, claimedPath);
                 } catch {
-                    /* ok */
+                    // Already claimed or cancelled
+                    this._processing.delete(requestId);
+                    continue;
                 }
 
-                // Show the form and wait for user interaction
+                const request = await readJsonSafe<AlignmentFormRequest>(claimedPath);
+                this._outputChannel.appendLine(
+                    `Orbit IPC v2: Claimed request ${request.requestId} "${request.title}"`
+                );
+
+                // Check if cancelled before showing form
+                const cancelledPath = path.join(dirs.cancelled, file);
+                if (fs.existsSync(cancelledPath)) {
+                    try { await fs.promises.unlink(claimedPath); } catch { /* ok */ }
+                    try { await fs.promises.unlink(cancelledPath); } catch { /* ok */ }
+                    this._outputChannel.appendLine(`Orbit IPC v2: Request ${request.requestId} was cancelled.`);
+                    continue;
+                }
+
+                // Show the form in the webview
                 const result = await this._formViewProvider.showForm(request);
 
-                // Write response file for the MCP server
+                // Write response file atomically
                 const response: AlignmentFormResponse = {
                     requestId: request.requestId,
                     action: result.action,
                     dismissed: result.dismissed,
                     data: result.data,
                     clarificationRequest: result.clarificationRequest,
-                    specificClarifications: (result as any).specificClarifications,
-                    partialAnswers: (result as any).partialAnswers,
+                    specificClarifications: result.specificClarifications,
+                    partialAnswers: result.partialAnswers,
                 };
 
-                const responsePath = path.join(RESPONSES_DIR, `${request.requestId}.json`);
-                fs.writeFileSync(responsePath, JSON.stringify(response, null, 2));
+                const responsePath = path.join(dirs.responses, file);
+                await writeJsonAtomic(responsePath, response);
+
+                // Clean up claimed file after response delivery
+                try {
+                    await fs.promises.unlink(claimedPath);
+                } catch { /* ok */ }
 
                 this._outputChannel.appendLine(
-                    `Response written: ${request.requestId} (dismissed: ${result.dismissed})`
+                    `Orbit IPC v2: Response delivered for ${request.requestId} (action: ${result.action})`
                 );
-            } catch (err) {
-                this._outputChannel.appendLine(`Error processing ${file}: ${err}`);
+            } catch (err: unknown) {
+                const message = err instanceof Error ? err.message : String(err);
+                this._outputChannel.appendLine(`Orbit IPC v2 Error processing ${file}: ${message}`);
+
+                // Write failure marker for client
+                try {
+                    const failedPath = path.join(dirs.failed, file);
+                    await writeJsonAtomic(failedPath, { requestId, error: message });
+                    if (fs.existsSync(claimedPath)) {
+                        await fs.promises.unlink(claimedPath);
+                    }
+                } catch { /* ignore */ }
             } finally {
                 this._processing.delete(requestId);
             }

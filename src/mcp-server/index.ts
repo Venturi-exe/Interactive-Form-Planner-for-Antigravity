@@ -27,7 +27,10 @@ function getIpcDirs() {
     return {
         ipcRoot,
         requests: path.join(ipcRoot, IPC_DIRS.REQUESTS),
+        claimed: path.join(ipcRoot, IPC_DIRS.CLAIMED),
+        cancelled: path.join(ipcRoot, IPC_DIRS.CANCELLED),
         responses: path.join(ipcRoot, IPC_DIRS.RESPONSES),
+        failed: path.join(ipcRoot, IPC_DIRS.FAILED),
         impacts: path.join(ipcRoot, IPC_DIRS.IMPACTS),
     };
 }
@@ -35,7 +38,10 @@ function getIpcDirs() {
 async function ensureIpcDirs(): Promise<void> {
     const dirs = getIpcDirs();
     await ensureDirSafe(dirs.requests);
+    await ensureDirSafe(dirs.claimed);
+    await ensureDirSafe(dirs.cancelled);
     await ensureDirSafe(dirs.responses);
+    await ensureDirSafe(dirs.failed);
     await ensureDirSafe(dirs.impacts);
 }
 
@@ -59,33 +65,60 @@ function generateRequestId(): string {
 
 /**
  * Polls the responses directory asynchronously until a response file appears.
- * Returns the parsed response data. Cleans up both request and response files.
+ * Returns the parsed response data. Cleans up IPC files.
  */
 async function pollForResponse(requestId: string, timeoutMs: number): Promise<Record<string, unknown>> {
     const dirs = getIpcDirs();
     const responseFile = path.join(dirs.responses, `${requestId}.json`);
     const requestFile = path.join(dirs.requests, `${requestId}.json`);
+    const claimedFile = path.join(dirs.claimed, `${requestId}.json`);
+    const cancelledFile = path.join(dirs.cancelled, `${requestId}.json`);
+    const failedFile = path.join(dirs.failed, `${requestId}.json`);
     const pollInterval = 500;
     const startTime = Date.now();
 
     while (Date.now() - startTime <= timeoutMs) {
-        try {
-            if (fs.existsSync(responseFile)) {
+        // 1. Check for normal response
+        if (fs.existsSync(responseFile)) {
+            try {
                 const data = await readJsonSafe<Record<string, unknown>>(responseFile);
                 try { await fs.promises.unlink(responseFile); } catch { /* ok */ }
                 try { await fs.promises.unlink(requestFile); } catch { /* ok */ }
+                try { await fs.promises.unlink(claimedFile); } catch { /* ok */ }
                 return data;
+            } catch (err) {
+                try { await fs.promises.unlink(responseFile); } catch { /* ok */ }
+                throw err;
             }
-        } catch (err) {
-            try { await fs.promises.unlink(responseFile); } catch { /* ok */ }
+        }
+
+        // 2. Check for failure marker
+        if (fs.existsSync(failedFile)) {
+            try {
+                const failData = await readJsonSafe<{ error?: string }>(failedFile);
+                try { await fs.promises.unlink(failedFile); } catch { /* ok */ }
+                try { await fs.promises.unlink(requestFile); } catch { /* ok */ }
+                try { await fs.promises.unlink(claimedFile); } catch { /* ok */ }
+                throw new Error(failData.error || "IPC processing failed in extension");
+            } catch (err) {
+                try { await fs.promises.unlink(failedFile); } catch { /* ok */ }
+                throw err;
+            }
+        }
+
+        // 3. Check for cancellation marker
+        if (fs.existsSync(cancelledFile)) {
+            try { await fs.promises.unlink(cancelledFile); } catch { /* ok */ }
             try { await fs.promises.unlink(requestFile); } catch { /* ok */ }
-            throw err;
+            try { await fs.promises.unlink(claimedFile); } catch { /* ok */ }
+            return { action: "timeout", dismissed: true, message: "Planning was cancelled." };
         }
 
         await new Promise((resolve) => setTimeout(resolve, pollInterval));
     }
 
     try { await fs.promises.unlink(requestFile); } catch { /* ok */ }
+    try { await fs.promises.unlink(claimedFile); } catch { /* ok */ }
     throw new Error("Form timed out after 5 minutes without a response.");
 }
 

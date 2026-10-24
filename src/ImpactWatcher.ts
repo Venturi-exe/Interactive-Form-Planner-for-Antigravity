@@ -9,12 +9,9 @@
 import * as vscode from "vscode";
 import * as fs from "fs";
 import * as path from "path";
-import * as os from "os";
 import type { ImpactReport } from "./types.js";
-
-const IPC_DIR = path.join(os.homedir(), ".antigravity-forms");
-const IMPACTS_DIR = path.join(IPC_DIR, "impacts");
-const HISTORY_DIR = path.join(IMPACTS_DIR, "history");
+import { getIpcRoot, IPC_DIRS } from "./core/constants.js";
+import { ensureDirSafe, readJsonSafe } from "./core/fsx.js";
 
 /**
  * Watches the IPC impacts directory for post-execution impact reports from the MCP server.
@@ -29,14 +26,17 @@ export class ImpactWatcher {
         this._outputChannel = vscode.window.createOutputChannel("Orbit");
     }
 
+    private get _impactsDir(): string {
+        return path.join(getIpcRoot(), IPC_DIRS.IMPACTS);
+    }
+
     /**
      * Starts watching for impact report files.
      */
-    public start(): void {
-        fs.mkdirSync(IMPACTS_DIR, { recursive: true });
-        fs.mkdirSync(HISTORY_DIR, { recursive: true });
+    public async start(): Promise<void> {
+        await ensureDirSafe(this._impactsDir);
 
-        this._outputChannel.appendLine("Watching for impact reports...");
+        this._outputChannel.appendLine("Orbit ImpactWatcher: Watching for impact reports...");
         this._pollInterval = setInterval(() => this._checkForReports(), 1000);
     }
 
@@ -56,7 +56,7 @@ export class ImpactWatcher {
     private async _checkForReports(): Promise<void> {
         let files: string[];
         try {
-            files = fs.readdirSync(IMPACTS_DIR).filter((f) => f.endsWith(".json"));
+            files = (await fs.promises.readdir(this._impactsDir)).filter((f) => f.endsWith(".json"));
         } catch {
             return;
         }
@@ -64,32 +64,27 @@ export class ImpactWatcher {
         for (const file of files) {
             const fileName = path.parse(file).name;
 
-            // Skip if already being processed
             if (this._processing.has(fileName)) continue;
             this._processing.add(fileName);
 
-            const filePath = path.join(IMPACTS_DIR, file);
+            const filePath = path.join(this._impactsDir, file);
 
             try {
-                const content = fs.readFileSync(filePath, "utf-8");
-                const report: ImpactReport = JSON.parse(content);
+                const report = await readJsonSafe<ImpactReport>(filePath);
 
                 this._outputChannel.appendLine(
-                    `Impact report received for task: ${report.taskId} ("${report.summary}")`
+                    `Orbit ImpactWatcher: Report received for task ${report.taskId} ("${report.summary}")`
                 );
 
-                // Delete the file from the inbox folder now that we have it
+                // Delete the file from the inbox folder now that we have read it safely
                 try {
-                    fs.unlinkSync(filePath);
-                } catch {
-                    /* ok */
-                }
+                    await fs.promises.unlink(filePath);
+                } catch { /* ok */ }
 
-                // Fire the callback to let the extension process it
                 this._onReport(report);
-
-            } catch (err) {
-                this._outputChannel.appendLine(`Error processing impact report ${file}: ${err}`);
+            } catch (err: unknown) {
+                const message = err instanceof Error ? err.message : String(err);
+                this._outputChannel.appendLine(`Orbit ImpactWatcher Error processing ${file}: ${message}`);
             } finally {
                 this._processing.delete(fileName);
             }
