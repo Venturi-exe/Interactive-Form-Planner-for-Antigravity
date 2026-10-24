@@ -2,7 +2,10 @@ import * as vscode from "vscode";
 import * as path from "path";
 import * as os from "os";
 import * as fs from "fs";
-import { ImpactReport } from "./types";
+import { ImpactReport } from "./types.js";
+import { initBrainFromTemplate, migrateToLayoutV3 } from "./core/migration.js";
+import { moveToTrash } from "./core/trash.js";
+import { writeJsonAtomic, ensureDirSafe } from "./core/fsx.js";
 
 export class OrbitBrain {
   private readonly brainRoot: string;
@@ -17,22 +20,31 @@ export class OrbitBrain {
       fs.mkdirSync(this.brainRoot, { recursive: true });
     }
 
+    // Initialize from template if empty, then run non-destructive layout v3 migration
+    const templateDir = path.join(__dirname, "..", "media", "brain-template");
+    initBrainFromTemplate(templateDir, this.brainRoot).catch((err) => {
+      console.error("Failed to initialize brain from template:", err);
+    });
+    migrateToLayoutV3(this.brainRoot).catch((err) => {
+      console.error("Failed to migrate brain to layout v3:", err);
+    });
+
     const brainArchPath = path.join(this.brainRoot, "BRAIN_ARCHITECTURE.md");
     if (!fs.existsSync(brainArchPath)) {
       const archContent = `<!--
 [ORBIT MEMORY SYSTEM]
-This file documents the structure of the Orbit Memory System.
+This file documents the structure of the Orbit Memory System (Layout v3).
 The agent uses this to navigate project context, architectural decisions, and persistent memory.
 
 COHERENCE & MAINTENANCE PROTOCOL (Use when running "update memory system"):
 1. Summarize Session: Aggregate all conversation context from the active session.
-2. Project Directory Sync: Ensure a directory exists for each project worked on.
-3. Capture & Index Memories: Write an <observation> to <project>/memories/sessions/ and update INDEX.md.
-4. Archive Historical Data: Move deprecated notes to <project>/archive/.
+2. Project Directory Sync: Ensure a directory exists under projects/<project_key>/ for each project worked on.
+3. Capture & Index Memories: Write an <observation> to projects/<project_key>/memories/sessions/ and update INDEX.md.
+4. Archive Historical Data: Move deprecated notes to projects/<project_key>/archive/.
 5. Context Sync: Update BRAIN_ARCHITECTURE.md and global_context_summary.md.
 -->
 
-# Orbit Memory System
+# Orbit Memory System (Layout v3)
 
 ## Tree Structure
 
@@ -67,12 +79,26 @@ Global environment and tooling context. Updated automatically by the agent.
     }
   }
 
+  /** Resolves project root directory supporting both Layout v3 and legacy Layout v2. */
+  public getProjectDir(projectName: string): string {
+    const key = this.sanitizeProjectName(projectName).toLowerCase();
+    const v3Path = path.join(this.brainRoot, "projects", key);
+    if (fs.existsSync(v3Path)) {
+      return v3Path;
+    }
+    const legacyPath = path.join(this.brainRoot, key);
+    if (fs.existsSync(legacyPath)) {
+      return legacyPath;
+    }
+    return v3Path;
+  }
+
   /** Creates a project directory with full memory scaffold if it doesn't exist. */
   public ensureProject(projectName: string): void {
     const sanitized = this.sanitizeProjectName(projectName);
     if (!sanitized) return;
 
-    const projDir = path.join(this.brainRoot, sanitized);
+    const projDir = path.join(this.brainRoot, "projects", sanitized.toLowerCase());
     const memoriesDir = path.join(projDir, "memories");
     const featuresDir = path.join(memoriesDir, "features");
     const tasksDir = path.join(memoriesDir, "tasks");
@@ -90,7 +116,7 @@ Global environment and tooling context. Updated automatically by the agent.
 
     const protocolPath = path.join(memoriesDir, "PROTOCOL.md");
     if (!fs.existsSync(protocolPath)) {
-      const protocolContent = `# Topic-Based Memory Protocol (v2.0)
+      const protocolContent = `# Topic-Based Memory Protocol (v3.0)
 
 This project organizes memories by specific topics (features, components, tasks, or bug fixes) rather than by conversation session.
 
@@ -128,7 +154,7 @@ Example Timeline Entry:
 This index maps active topics and tags to their respective memory files. Update this when creating or appending to a topic file.
 
 ## Project Map
-- **${sanitized}**: This project directory.
+- **${sanitized.toLowerCase()}**: This project directory.
 
 ## Concepts and Tags
 [Agent-populated during "update memory system"]
@@ -146,48 +172,44 @@ This index maps active topics and tags to their respective memory files. Update 
     this.updateGlobalContextProjects();
   }
 
-  /** Returns list of all registered project directory names recursively. */
+  /** Returns list of all registered project directory names. */
   public listProjects(): string[] {
     if (!fs.existsSync(this.brainRoot)) {
       return [];
     }
-    const projects: string[] = [];
-    const walk = (dir: string) => {
-      let files: string[] = [];
+    const projects = new Set<string>();
+
+    // 1. Scan Layout v3 projects/ directory
+    const v3ProjectsDir = path.join(this.brainRoot, "projects");
+    if (fs.existsSync(v3ProjectsDir)) {
       try {
-        files = fs.readdirSync(dir);
-      } catch (e) {
-        return;
-      }
-      let hasMemories = false;
-      for (const file of files) {
-        const fullPath = path.join(dir, file);
-        try {
-          const stat = fs.statSync(fullPath);
-          if (stat.isDirectory()) {
-            if (file === "memories" || file === "cartograph") {
-              hasMemories = true;
-            } else if (file !== "archive" && file !== "concepts" && file !== "facts" && file !== "features" && file !== "tasks" && file !== "sessions") {
-              walk(fullPath);
+        const entries = fs.readdirSync(v3ProjectsDir);
+        for (const entry of entries) {
+          const fullPath = path.join(v3ProjectsDir, entry);
+          try {
+            if (fs.statSync(fullPath).isDirectory()) {
+              projects.add(entry.toLowerCase());
             }
-          }
-        } catch {
-          /* ignore stat error */
+          } catch { /* skip */ }
         }
-      }
-      if (hasMemories) {
-        const relative = path.relative(this.brainRoot, dir).replace(/\\/g, '/');
-        if (relative) {
-          projects.push(relative);
-        }
-      }
-    };
-    try {
-      walk(this.brainRoot);
-    } catch (e) {
-      console.error("Failed to list projects recursively:", e);
+      } catch { /* skip */ }
     }
-    return projects;
+
+    // 2. Scan top-level for backwards compatibility
+    try {
+      const entries = fs.readdirSync(this.brainRoot);
+      for (const entry of entries) {
+        if (entry === "projects" || entry.startsWith(".")) continue;
+        const fullPath = path.join(this.brainRoot, entry);
+        try {
+          if (fs.statSync(fullPath).isDirectory() && fs.existsSync(path.join(fullPath, "memories"))) {
+            projects.add(entry.toLowerCase());
+          }
+        } catch { /* skip */ }
+      }
+    } catch { /* skip */ }
+
+    return Array.from(projects).sort();
   }
 
   /** Returns the brain root path. */
@@ -235,10 +257,8 @@ This index maps active topics and tags to their respective memory files. Update 
 
   /** Lists all cartograph reports for a specific project. */
   public listCartographReports(projectName: string): { filename: string; report: ImpactReport }[] {
-    const sanitized = this.sanitizeProjectName(projectName);
-    if (!sanitized) return [];
-
-    const cartographDir = path.join(this.brainRoot, sanitized, "cartograph");
+    const projDir = this.getProjectDir(projectName);
+    const cartographDir = path.join(projDir, "cartograph");
     if (!fs.existsSync(cartographDir)) {
       return [];
     }
@@ -262,35 +282,39 @@ This index maps active topics and tags to their respective memory files. Update 
     }
   }
 
-  /** Writes/saves a cartograph report to disk. Returns the written filename. */
+  /** Writes/saves a cartograph report to disk atomically. Returns the written filename. */
   public writeCartographReport(projectName: string, report: ImpactReport, filename?: string): string {
-    const sanitized = this.sanitizeProjectName(projectName);
-    this.ensureProject(sanitized);
+    const projDir = this.getProjectDir(projectName);
+    const cartographDir = path.join(projDir, "cartograph");
+    fs.mkdirSync(cartographDir, { recursive: true });
 
-    const cartographDir = path.join(this.brainRoot, sanitized, "cartograph");
     const name = filename || `${report.taskId.replace(/[^a-zA-Z0-9\-_]/g, "_")}_${report.timestamp.replace(/[^a-zA-Z0-9\-_]/g, "_")}.json`;
     const fullPath = path.join(cartographDir, name);
 
-    fs.writeFileSync(fullPath, JSON.stringify(report, null, 2), "utf-8");
+    writeJsonAtomic(fullPath, report).catch((err) => {
+      console.error(`Failed atomic write of cartograph report ${name}:`, err);
+    });
     return name;
   }
 
-  /** Deletes a specific cartograph report. */
+  /** Deletes a specific cartograph report by moving it to .trash. */
   public deleteCartographReport(projectName: string, filename: string): void {
-    const sanitized = this.sanitizeProjectName(projectName);
-    const fullPath = path.join(this.brainRoot, sanitized, "cartograph", filename);
+    const projDir = this.getProjectDir(projectName);
+    const fullPath = path.join(projDir, "cartograph", filename);
     if (fs.existsSync(fullPath)) {
-      fs.unlinkSync(fullPath);
+      moveToTrash(fullPath, this.brainRoot).catch((err) => {
+        console.error(`Failed to move cartograph report to trash ${filename}:`, err);
+      });
     }
   }
 
-  /** Moves a cartograph report from one project to another. */
+  /** Moves a cartograph report from one project to another safely. */
   public moveCartographReport(sourceProject: string, targetProject: string, filename: string): void {
-    const sourceSanitized = this.sanitizeProjectName(sourceProject);
-    const targetSanitized = this.sanitizeProjectName(targetProject);
-    this.ensureProject(targetSanitized);
+    const sourceDir = this.getProjectDir(sourceProject);
+    const targetDir = this.getProjectDir(targetProject);
+    this.ensureProject(targetProject);
 
-    const sourcePath = path.join(this.brainRoot, sourceSanitized, "cartograph", filename);
+    const sourcePath = path.join(sourceDir, "cartograph", filename);
     if (!fs.existsSync(sourcePath)) return;
 
     try {
@@ -298,10 +322,12 @@ This index maps active topics and tags to their respective memory files. Update 
       const report = JSON.parse(content) as ImpactReport;
       
       // Update report projectName metadata
-      report.projectName = targetSanitized;
+      report.projectName = this.sanitizeProjectName(targetProject).toLowerCase();
 
-      this.writeCartographReport(targetSanitized, report, filename);
-      fs.unlinkSync(sourcePath);
+      this.writeCartographReport(targetProject, report, filename);
+      moveToTrash(sourcePath, this.brainRoot).catch((err) => {
+        console.error(`Failed to move old report to trash: ${filename}`, err);
+      });
     } catch (e) {
       console.error(`Failed to move cartograph report ${filename} from ${sourceProject} to ${targetProject}:`, e);
     }
@@ -309,8 +335,8 @@ This index maps active topics and tags to their respective memory files. Update 
 
   /** Reads the project-specific semantic tag registry. */
   public readTagRegistry(projectName: string): Record<string, { color: string; label: string }> {
-    const sanitized = this.sanitizeProjectName(projectName);
-    const registryPath = path.join(this.brainRoot, sanitized, "cartograph-tags.json");
+    const projDir = this.getProjectDir(projectName);
+    const registryPath = path.join(projDir, "cartograph-tags.json");
     if (!fs.existsSync(registryPath)) {
       const defaultRegistry = {
         feat: { color: "var(--tag-color-emerald, #10b981)", label: "Feature" },
@@ -324,7 +350,7 @@ This index maps active topics and tags to their respective memory files. Update 
     try {
       const content = fs.readFileSync(registryPath, "utf-8");
       const data = JSON.parse(content);
-      return data.registry || data;
+      return data.registry || {};
     } catch (e) {
       console.error(`Failed to read tag registry for project ${projectName}:`, e);
       return {};
@@ -333,13 +359,15 @@ This index maps active topics and tags to their respective memory files. Update 
 
   /** Writes the project-specific semantic tag registry. */
   public writeTagRegistry(projectName: string, registry: Record<string, { color: string; label: string }>): void {
-    const sanitized = this.sanitizeProjectName(projectName);
-    this.ensureProject(sanitized);
-    const registryPath = path.join(this.brainRoot, sanitized, "cartograph-tags.json");
+    const projDir = this.getProjectDir(projectName);
+    this.ensureProject(projectName);
+    const registryPath = path.join(projDir, "cartograph-tags.json");
 
     try {
       const data = { registry };
-      fs.writeFileSync(registryPath, JSON.stringify(data, null, 2), "utf-8");
+      writeJsonAtomic(registryPath, data).catch((err) => {
+        console.error(`Failed atomic write of tag registry for project ${projectName}:`, err);
+      });
     } catch (e) {
       console.error(`Failed to write tag registry for project ${projectName}:`, e);
     }
@@ -354,7 +382,6 @@ This index maps active topics and tags to their respective memory files. Update 
 
     const legacyDir = path.join(os.homedir(), ".antigravity-forms", "impacts", "history");
     if (!fs.existsSync(legacyDir)) {
-      // Nothing to migrate, write sentinel and exit
       fs.writeFileSync(sentinelPath, "migrated", "utf-8");
       return;
     }
@@ -366,10 +393,10 @@ This index maps active topics and tags to their respective memory files. Update 
         try {
           const content = fs.readFileSync(fullLegacyPath, "utf-8");
           const report = JSON.parse(content) as ImpactReport;
-          const projName = report.projectName || "Default";
+          const projName = report.projectName || "_default";
           
           this.writeCartographReport(projName, report);
-          fs.unlinkSync(fullLegacyPath);
+          moveToTrash(fullLegacyPath, this.brainRoot).catch(() => {});
         } catch (e) {
           console.error(`Failed to migrate legacy report file ${file}:`, e);
         }

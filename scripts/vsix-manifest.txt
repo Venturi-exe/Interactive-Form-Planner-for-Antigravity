@@ -3,6 +3,10 @@ assets/tab-hub.png
 assets/tab-planner.png
 assets/tab-settings.png
 LICENSE.txt
+media/brain-template/BRAIN_ARCHITECTURE.md
+media/brain-template/global_context_summary.md
+media/brain-template/projects/_default/INDEX.md
+media/brain-template/projects/_default/PROTOCOL.md
 out/extension.js
 out/mcp-server/index.js
 out/uninstall.js
