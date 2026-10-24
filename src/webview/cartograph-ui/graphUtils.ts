@@ -99,7 +99,9 @@ export const getCompoundElements = (
             const diffHours = Math.round(diffMin / 60);
             label = `+${diffHours}h`;
           }
-        } catch {}
+        } catch {
+          /* ignore date diff parse error */
+        }
 
         edges.push({
           id: `edge:temporal:${prevEntry.taskId}->${entry.taskId}`,

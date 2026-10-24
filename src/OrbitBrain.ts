@@ -171,7 +171,9 @@ This index maps active topics and tags to their respective memory files. Update 
               walk(fullPath);
             }
           }
-        } catch (e) {}
+        } catch {
+          /* ignore stat error */
+        }
       }
       if (hasMemories) {
         const relative = path.relative(this.brainRoot, dir).replace(/\\/g, '/');

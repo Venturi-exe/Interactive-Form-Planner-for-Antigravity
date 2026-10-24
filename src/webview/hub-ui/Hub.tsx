@@ -196,12 +196,12 @@ export const HubApp = () => {
     setCompareMode(nextMode);
     setCompareReportIds([]);
     if (!nextMode && reports.length > 0 && !selectedReportId) {
-      setSelectedReportId(reports[0].filename);
+      setSelectedReportId(reports[0].filename || reports[0].taskId || null);
     }
   };
 
   const selectedReportsForCompare = useMemo(() => {
-    return reports.filter((r) => compareReportIds.includes(r.filename));
+    return reports.filter((r) => Boolean(r.filename && compareReportIds.includes(r.filename)));
   }, [reports, compareReportIds]);
 
   return (

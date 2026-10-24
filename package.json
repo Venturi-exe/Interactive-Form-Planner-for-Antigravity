@@ -35,11 +35,6 @@
           "id": "orbit-container",
           "title": "Orbit",
           "icon": "$(symbol-parameter)"
-        },
-        {
-          "id": "orbit-quota-container",
-          "title": "Orbit Quota",
-          "icon": "$(dashboard)"
         }
       ]
     },
@@ -50,16 +45,8 @@
           "id": "orbit.formView",
           "name": "Orbit Panel"
         }
-      ],
-      "orbit-quota-container": [
-        {
-          "type": "webview",
-          "id": "orbit.quotaView",
-          "name": "Quota Monitoring"
-        }
       ]
     },
-
     "commands": [
       {
         "command": "orbit.showPanel",
@@ -127,72 +114,38 @@
           "minimum": 5,
           "maximum": 300,
           "description": "Countdown warning threshold in seconds before inactivity timeout is triggered."
-        },
-        "orbit.quota.refreshRate": {
-          "type": "integer",
-          "default": 90,
-          "minimum": 10,
-          "description": "Interval in seconds between background server status and quota updates."
-        },
-        "orbit.quota.warningThreshold": {
-          "type": "integer",
-          "default": 40,
-          "minimum": 0,
-          "maximum": 100,
-          "description": "Quota percentage threshold below which indicators turn yellow and warning system alerts are shown."
-        },
-        "orbit.quota.criticalThreshold": {
-          "type": "integer",
-          "default": 20,
-          "minimum": 0,
-          "maximum": 100,
-          "description": "Quota percentage threshold below which indicators turn red and critical system alerts are shown."
-        },
-        "orbit.quota.gaugeStyle": {
-          "type": "string",
-          "default": "circular-segmented",
-          "enum": [
-            "circular-segmented",
-            "circular-plain",
-            "horizontal-bar",
-            "vertical-bar",
-            "segmented-horizontal-bar",
-            "segmented-vertical-bar"
-          ],
-          "description": "The visual style of the quota remaining gauges."
-        },
-        "orbit.quota.historyRangeDays": {
-          "type": "integer",
-          "default": 7,
-          "minimum": 1,
-          "maximum": 30,
-          "description": "Number of days of history logs to retain for burn rate calculation."
         }
       }
     }
   },
   "scripts": {
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.webview.json --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
     "build-webview": "node src/webview/build.js",
     "compile": "tsc -p ./ && npm run build-webview",
     "watch": "tsc -watch -p ./",
-    "package": "npx @vscode/vsce package --no-dependencies",
-    "lint": "tsc --noEmit"
+    "package": "npx @vscode/vsce package --no-dependencies"
   },
   "devDependencies": {
+    "@types/dagre": "^0.7.52",
     "@types/node": "^22.0.0",
-    "@types/vscode": "^1.96.0",
-    "typescript": "^5.7.0",
-    "esbuild": "^0.20.0",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
-    "@types/dagre": "^0.7.52"
+    "@types/vscode": "^1.96.0",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.13.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.72.0",
+    "vitest": "^5.0.5"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
-    "zod": "^3.24.0",
+    "@xyflow/react": "^12.0.0",
+    "dagre": "^0.8.5",
+    "jsonc-parser": "^3.3.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "@xyflow/react": "^12.0.0",
-    "dagre": "^0.8.5"
+    "zod": "^3.24.0"
   }
 }

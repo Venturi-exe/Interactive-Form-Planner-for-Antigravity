@@ -93,7 +93,9 @@ export const StatsPanel: React.FC<StatsPanelProps> = ({ reports }) => {
       try {
         const dateStr = new Date(r.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' });
         dayMap.set(dateStr, (dayMap.get(dateStr) || 0) + 1);
-      } catch {}
+      } catch {
+        /* ignore invalid date string */
+      }
     });
 
     const dayData = Array.from(dayMap.entries());

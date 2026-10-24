@@ -1,5 +1,5 @@
 import React, { memo } from 'react';
-import { Handle, Position, NodeProps } from '@xyflow/react';
+import { Handle, Position, NodeProps, Node } from '@xyflow/react';
 
 export interface CustomNodeData {
   type: 'task' | 'file' | 'directory';
@@ -13,7 +13,9 @@ export interface CustomNodeData {
   [key: string]: any;
 }
 
-const CustomNode = ({ data, selected }: NodeProps<CustomNodeData>) => {
+export type CustomNodeType = Node<CustomNodeData>;
+
+const CustomNode = ({ data, selected }: NodeProps<CustomNodeType>) => {
   const { type, label, subtitle, changeType, filePath, isCollapsed } = data;
 
   // Semantic rendering based on node types

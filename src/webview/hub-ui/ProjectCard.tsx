@@ -136,22 +136,25 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
             </div>
           ) : (
             <div className="reports-table">
-              {filteredReports.map((report) => (
-                <ReportRow
-                  key={report.filename || report.taskId}
-                  report={report}
-                  isSelected={
-                    compareMode 
-                      ? compareReportIds.includes(report.filename)
-                      : selectedReportId === report.filename
-                  }
-                  onSelect={() => onSelectReport(report.filename, projectName)}
-                  isBulkSelected={bulkSelectedIds.has(report.filename)}
-                  onToggleBulkSelect={() => onToggleBulkSelect(report.filename)}
-                  tagRegistry={tagRegistry}
-                  compareMode={compareMode}
-                />
-              ))}
+              {filteredReports.map((report) => {
+                const repKey = report.filename || report.taskId;
+                return (
+                  <ReportRow
+                    key={repKey}
+                    report={report}
+                    isSelected={
+                      compareMode 
+                        ? compareReportIds.includes(repKey)
+                        : selectedReportId === repKey
+                    }
+                    onSelect={() => onSelectReport(repKey, projectName)}
+                    isBulkSelected={bulkSelectedIds.has(repKey)}
+                    onToggleBulkSelect={() => onToggleBulkSelect(repKey)}
+                    tagRegistry={tagRegistry}
+                    compareMode={compareMode}
+                  />
+                );
+              })}
             </div>
           )}
         </div>

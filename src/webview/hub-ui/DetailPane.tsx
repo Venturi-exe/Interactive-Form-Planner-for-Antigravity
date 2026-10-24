@@ -34,7 +34,7 @@ const DynamicBackground = () => {
 };
 
 const nodeTypes = {
-  custom: CustomNode,
+  custom: CustomNode as any,
 };
 
 export const DetailPane: React.FC<DetailPaneProps> = ({

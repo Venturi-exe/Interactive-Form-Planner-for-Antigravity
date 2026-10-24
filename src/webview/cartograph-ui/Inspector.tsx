@@ -244,7 +244,9 @@ export const Inspector: React.FC<InspectorProps> = ({ selectedNode, onClose, hei
                             const date = new Date(entry.timestamp);
                             dateStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) +
                               " " + date.toLocaleDateString([], { month: 'short', day: 'numeric' });
-                          } catch (e) {}
+                          } catch {
+                            /* ignore date parse error */
+                          }
 
                           return (
                             <div key={i} style={{ borderLeft: '3px solid var(--vscode-focusBorder)', paddingLeft: '8px', marginBottom: '8px' }}>
@@ -394,7 +396,9 @@ export const Inspector: React.FC<InspectorProps> = ({ selectedNode, onClose, hei
                             </div>
                           );
                         }
-                      } catch (e) {}
+                      } catch {
+                        /* ignore json parse error */
+                      }
 
                       return (
                         <pre className="code-block" style={{ margin: 0, padding: '6px', fontSize: '11px' }}>

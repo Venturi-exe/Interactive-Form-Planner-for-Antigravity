@@ -324,7 +324,9 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
                         matchedFile = path.join(loc, match);
                         break;
                     }
-                } catch (e) {}
+                } catch {
+                    /* ignore directory read error */
+                }
             }
         }
 

@@ -33,7 +33,7 @@ const vscode = (window as any).vscode || {
 };
 
 const nodeTypes = {
-  custom: CustomNode,
+  custom: CustomNode as any,
 };
 
 
@@ -48,8 +48,8 @@ const DynamicBackground = () => {
 };
 
 export const CartographApp = () => {
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selectedNode, setSelectedNode] = useState<{ id: string; data: CustomNodeData } | null>(null);
 
   const [reportsHistory, setReportsHistory] = useState<ImpactReport[]>([]);
@@ -182,8 +182,8 @@ export const CartographApp = () => {
   const onNodeDoubleClick = useCallback((event: React.MouseEvent, node: Node) => {
     if (node.data?.type === 'directory') {
       event.stopPropagation();
-      const dirPath = node.data.filePath;
-      if (!dirPath) return;
+      const dirPath = (node.data as any)?.filePath;
+      if (!dirPath || typeof dirPath !== 'string') return;
 
       pushToUndo(nodes, edges);
 
@@ -237,9 +237,9 @@ export const CartographApp = () => {
     const handleMessage = (event: MessageEvent) => {
       const message = event.data;
       if (message.type === 'load_history') {
-        const history = message.reports || [];
+        const history: ImpactReport[] = message.reports || [];
         setReportsHistory(history);
-        const isValid = history.some((r) => r.taskId === activeReportIdRef.current);
+        const isValid = history.some((r: ImpactReport) => r.taskId === activeReportIdRef.current);
         const active = isValid ? activeReportIdRef.current : (history.length > 0 ? history[0].taskId : '');
         setActiveReportId(active);
       } else if (message.type === 'new_report') {
@@ -331,7 +331,9 @@ export const CartographApp = () => {
                       const date = new Date(report.timestamp);
                       dateStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) +
                         " " + date.toLocaleDateString([], { month: 'short', day: 'numeric' });
-                    } catch (e) { }
+                    } catch {
+                      /* ignore date parse error */
+                    }
 
                     const optionLabel = report.isMerged
                       ? `${dateStr}: [Merged] ${report.summary}`

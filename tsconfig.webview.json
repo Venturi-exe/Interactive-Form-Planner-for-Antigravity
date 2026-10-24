@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "noEmit": true
+  },
+  "include": [
+    "src/webview/cartograph-ui/**/*",
+    "src/webview/hub-ui/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "out",
+    "src/webview/vendor",
+    "src/webview/*.js",
+    "src/webview/*.map"
+  ]
+}
