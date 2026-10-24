@@ -1,0 +1,22 @@
+{
+  "name": "antigravity-pre-execution-form-planner",
+  "displayName": "Orbit Legacy Deprecation Stub",
+  "description": "Notice stub: Antigravity Pre-Execution Form Planner has been succeeded by Orbit.",
+  "version": "0.2.7",
+  "publisher": "VNTRCORP",
+  "license": "SEE LICENSE IN LICENSE.txt",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Venturi-exe/Interactive-Form-Planner-for-Antigravity.git"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js"
+}

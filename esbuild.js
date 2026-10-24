@@ -90,6 +90,15 @@ async function buildAll() {
       logLevel: 'info',
     });
 
+    // 6. Legacy stub bundle
+    console.log('[esbuild] Bundling legacy stub...');
+    await esbuild.build({
+      ...commonNodeConfig,
+      entryPoints: [path.join(__dirname, 'legacy-stub', 'extension.ts')],
+      outfile: path.join(__dirname, 'legacy-stub', 'extension.js'),
+      external: ['vscode'],
+    });
+
     console.log('[esbuild] Build finished successfully!');
   } catch (error) {
     console.error('[esbuild] Build failed:', error);
