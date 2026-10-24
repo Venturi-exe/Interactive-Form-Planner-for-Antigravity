@@ -28,14 +28,34 @@ interface LockMetadata {
 }
 
 /**
- * Cleans up leftover *.steal.* and *.tmp.* files older than staleMs in locksDir (P-05).
+ * Cleans up leftover *.steal.* and *.tmp.* files older than staleMs in locksDir (P-05, Q-03).
+ * Evaluates steal artifact age using embedded creation timestamp to prevent deleting files mid-check.
  */
 async function cleanStaleLockArtifacts(locksDir: string, staleMs: number): Promise<void> {
     try {
         const entries = await fs.promises.readdir(locksDir);
         const now = Date.now();
         for (const entry of entries) {
-            if (entry.includes(".steal.") || entry.includes(".tmp.")) {
+            if (entry.includes(".steal.")) {
+                // Q-03: Judge age by timestamp embedded in filename, not by file mtime
+                const match = entry.match(/\.steal\.(\d+)\./);
+                if (match) {
+                    const fileTs = parseInt(match[1], 10);
+                    if (now - fileTs > staleMs) {
+                        const fullPath = path.join(locksDir, entry);
+                        await fs.promises.unlink(fullPath).catch(() => {});
+                    }
+                } else {
+                    // Legacy steal file without embedded timestamp: fall back to mtime
+                    const fullPath = path.join(locksDir, entry);
+                    try {
+                        const stat = await fs.promises.stat(fullPath);
+                        if (now - stat.mtimeMs > staleMs) {
+                            await fs.promises.unlink(fullPath).catch(() => {});
+                        }
+                    } catch { /* ignore */ }
+                }
+            } else if (entry.includes(".tmp.")) {
                 const fullPath = path.join(locksDir, entry);
                 try {
                     const stat = await fs.promises.stat(fullPath);
@@ -187,8 +207,10 @@ export async function acquireLock(
                     }
 
                     if (isStale) {
-                        // Safe Stale Steal via atomic rename to a unique path (M-03, P-05)
-                        const stealPath = `${lockPath}.steal.${crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
+                        // Safe Stale Steal via atomic rename to a unique path (M-03, P-05, Q-03)
+                        const stealTs = Date.now();
+                        const stealId = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+                        const stealPath = `${lockPath}.steal.${stealTs}.${stealId}`;
                         try {
                             await fs.promises.rename(lockPath, stealPath);
 
@@ -219,14 +241,23 @@ export async function acquireLock(
                                 await fs.promises.unlink(stealPath).catch(() => {});
                             } else {
                                 // Steal check failed: file was not stale after all.
-                                // Do NOT rename back over lockPath. Use fs.link which fails with EEXIST if a new lock exists (P-05).
-                                try {
-                                    await fs.promises.link(stealPath, lockPath);
-                                } catch {
-                                    // EEXIST or link failure: a new lock was already created or hardlink unsupported
-                                } finally {
-                                    await fs.promises.unlink(stealPath).catch(() => {});
+                                // Do NOT rename back over lockPath. Use fs.link which fails with EEXIST if a new lock exists (P-05, Q-04).
+                                for (let attempt = 0; attempt < 2; attempt++) {
+                                    try {
+                                        await fs.promises.link(stealPath, lockPath);
+                                        break;
+                                    } catch (linkErr: unknown) {
+                                        const linkCode = (linkErr as { code?: string })?.code;
+                                        if (linkCode === "EEXIST") {
+                                            // A new lock already exists; skip restore safely (P-05)
+                                            break;
+                                        }
+                                        if (attempt === 0) {
+                                            await new Promise((r) => setTimeout(r, 25));
+                                        }
+                                    }
                                 }
+                                await fs.promises.unlink(stealPath).catch(() => {});
                             }
                             continue;
                         } catch {

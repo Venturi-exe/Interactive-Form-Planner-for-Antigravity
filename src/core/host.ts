@@ -7,12 +7,13 @@ export interface HostInfo {
     geminiDir: string;
     configDir: string;
     mcpConfigPath: string;
+    mcpConfigPaths: string[];
     geminiMdPath: string;
 }
 
 /**
  * Determines whether a directory path belongs to an Antigravity installation (M-01).
- * Checks the parent folder of 'extensions' (e.g. .vscode vs .antigravity).
+ * Checks the parent folder of 'extensions' (e.g. .vscode vs .antigravity / .antigravity-ide).
  * Does NOT rely on substring matching on extension names.
  */
 export function isAntigravityExtensionDir(dirPath: string): boolean {
@@ -27,7 +28,12 @@ export function isAntigravityExtensionDir(dirPath: string): boolean {
     }
 
     const editorFolder = segments[extIdx - 1].toLowerCase();
-    if (editorFolder === ".antigravity" || editorFolder === "antigravity" || editorFolder === "antigravity-ide") {
+    if (
+        editorFolder === ".antigravity" ||
+        editorFolder === "antigravity" ||
+        editorFolder === "antigravity-ide" ||
+        editorFolder === ".antigravity-ide"
+    ) {
         return true;
     }
     // .vscode, .vscode-insiders, .vscode-server, code, etc.
@@ -55,7 +61,12 @@ export function getStorageOwner(storagePath: string): "antigravity" | "vscode" |
         editorSegment = segments[gsIdx - 2];
     }
 
-    if (editorSegment === "antigravity" || editorSegment === "antigravity-ide" || editorSegment === ".antigravity") {
+    if (
+        editorSegment === "antigravity" ||
+        editorSegment === "antigravity-ide" ||
+        editorSegment === ".antigravity" ||
+        editorSegment === ".antigravity-ide"
+    ) {
         return "antigravity";
     }
     if (
@@ -74,10 +85,25 @@ export function getStorageOwner(storagePath: string): "antigravity" | "vscode" |
  * Detects the host environment and configuration paths.
  * Supports Antigravity IDE (~/.gemini/antigravity-ide) and Antigravity CLI (~/.gemini/antigravity).
  * Supports detecting host environment from caller directory when appName is not available (M-01).
+ * Discovers all existing candidate mcp_config.json files for multi-host cleanup (Q-01).
  */
 export function detectHost(appName?: string, callerDir?: string): HostInfo {
     const homeDir = os.homedir();
     const geminiDir = path.join(homeDir, ".gemini");
+
+    const ideConfigPath = path.join(geminiDir, "antigravity-ide", "mcp_config.json");
+    const cliConfigPath = path.join(geminiDir, "antigravity", "mcp_config.json");
+
+    const mcpConfigPaths: string[] = [];
+    if (fs.existsSync(ideConfigPath)) {
+        mcpConfigPaths.push(ideConfigPath);
+    }
+    if (fs.existsSync(cliConfigPath)) {
+        mcpConfigPaths.push(cliConfigPath);
+    }
+    if (mcpConfigPaths.length === 0) {
+        mcpConfigPaths.push(ideConfigPath);
+    }
 
     let configDir = path.join(geminiDir, "antigravity-ide");
     if (!fs.existsSync(configDir) && fs.existsSync(path.join(geminiDir, "antigravity"))) {
@@ -97,6 +123,7 @@ export function detectHost(appName?: string, callerDir?: string): HostInfo {
         geminiDir,
         configDir,
         mcpConfigPath: path.join(configDir, "mcp_config.json"),
+        mcpConfigPaths,
         geminiMdPath: path.join(geminiDir, "GEMINI.md"),
     };
 }

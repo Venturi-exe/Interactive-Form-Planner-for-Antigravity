@@ -277,4 +277,89 @@ describe("runUninstall and isOrbitServerEntry (N-01, N-02)", () => {
         const trueEntry = { args: [path.join(baseStorage, "mcp-server", "index.js")] };
         expect(isOrbitServerEntry("orbit", trueEntry, baseStorage)).toBe(true);
     });
+
+    it("cleans VS Code-owned entries across multiple mcp_config.json files while preserving rules if an Antigravity entry remains (Q-01)", async () => {
+        const realExtensionDir = "vntrcorp.antigravity-interactive-form-planner-planning-tool-0.4.0";
+        const realStorageDir = "vntrcorp.antigravity-interactive-form-planner-planning-tool";
+
+        const ideConfigPath = path.join(tempDir, "antigravity-ide-config.json");
+        const cliConfigPath = path.join(tempDir, "antigravity-cli-config.json");
+
+        const vscodeStorage = `C:/Users/test/AppData/Roaming/Code/User/globalStorage/${realStorageDir}/mcp-server/index.js`;
+        const antigravityStorage = `C:/Users/test/AppData/Roaming/Antigravity/User/globalStorage/${realStorageDir}/mcp-server/index.js`;
+
+        // CLI config has leftover VS Code entry (e.g. from v0.2.6)
+        fs.writeFileSync(cliConfigPath, JSON.stringify({
+            mcpServers: {
+                orbit: { command: "node", args: [vscodeStorage] }
+            }
+        }), "utf-8");
+
+        // IDE config has active Antigravity entry
+        fs.writeFileSync(ideConfigPath, JSON.stringify({
+            mcpServers: {
+                "antigravity-planner": { command: "node", args: [antigravityStorage] }
+            }
+        }), "utf-8");
+
+        fs.writeFileSync(mockGeminiMd, `${ORBIT_START_MARKER}\nrules\n${ORBIT_END_MARKER}\n`, "utf-8");
+
+        const vscodeCaller = `C:/Users/test/.vscode/extensions/${realExtensionDir}/out`;
+        const res = await runUninstall({
+            callerDir: vscodeCaller,
+            mcpConfigPaths: [ideConfigPath, cliConfigPath]
+        });
+
+        expect(res.success).toBe(true);
+        expect(res.removedServer).toBe(true);
+        // Rules must NOT be removed because ideConfigPath still contains an Antigravity entry
+        expect(res.removedRules).toBe(false);
+        expect(fs.readFileSync(mockGeminiMd, "utf-8")).toContain(ORBIT_START_MARKER);
+
+        // CLI config had its VS Code entry removed
+        const cliConfigAfter = JSON.parse(fs.readFileSync(cliConfigPath, "utf-8"));
+        expect(cliConfigAfter.mcpServers.orbit).toBeUndefined();
+
+        // IDE config still has its Antigravity entry
+        const ideConfigAfter = JSON.parse(fs.readFileSync(ideConfigPath, "utf-8"));
+        expect(ideConfigAfter.mcpServers["antigravity-planner"]).toBeDefined();
+    });
+
+    it("removes rules from GEMINI.md when all candidate config files have no remaining Orbit entries (Q-01)", async () => {
+        const realExtensionDir = "vntrcorp.antigravity-interactive-form-planner-planning-tool-0.4.0";
+        const realStorageDir = "vntrcorp.antigravity-interactive-form-planner-planning-tool";
+
+        const ideConfigPath = path.join(tempDir, "antigravity-ide-config2.json");
+        const cliConfigPath = path.join(tempDir, "antigravity-cli-config2.json");
+
+        const vscodeStorage = `C:/Users/test/AppData/Roaming/Code/User/globalStorage/${realStorageDir}/mcp-server/index.js`;
+
+        // CLI config has leftover VS Code entry
+        fs.writeFileSync(cliConfigPath, JSON.stringify({
+            mcpServers: {
+                orbit: { command: "node", args: [vscodeStorage] }
+            }
+        }), "utf-8");
+
+        // IDE config has no orbit entries
+        fs.writeFileSync(ideConfigPath, JSON.stringify({
+            mcpServers: {
+                git: { command: "uvx", args: ["mcp-server-git"] }
+            }
+        }), "utf-8");
+
+        fs.writeFileSync(mockGeminiMd, `${ORBIT_START_MARKER}\nrules\n${ORBIT_END_MARKER}\n`, "utf-8");
+
+        const vscodeCaller = `C:/Users/test/.vscode/extensions/${realExtensionDir}/out`;
+        const res = await runUninstall({
+            callerDir: vscodeCaller,
+            mcpConfigPaths: [ideConfigPath, cliConfigPath]
+        });
+
+        expect(res.success).toBe(true);
+        expect(res.removedServer).toBe(true);
+        // Rules MUST be removed because no Orbit entries remain anywhere
+        expect(res.removedRules).toBe(true);
+        expect(fs.readFileSync(mockGeminiMd, "utf-8")).not.toContain(ORBIT_START_MARKER);
+    });
 });

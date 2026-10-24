@@ -17,6 +17,7 @@ export interface UninstallOptions {
     callerDir?: string;
     globalStoragePath?: string;
     mcpConfigPath?: string;
+    mcpConfigPaths?: string[];
     geminiMdPath?: string;
 }
 
@@ -100,64 +101,77 @@ export async function runUninstall(options?: UninstallOptions): Promise<Uninstal
         console.log("[Orbit Uninstall] Starting clean removal...");
         const callerDir = options?.callerDir || __dirname;
         const host = detectHost(options?.appName, callerDir);
-        const mcpConfigPath = options?.mcpConfigPath || host.mcpConfigPath;
         const geminiMdPath = options?.geminiMdPath || host.geminiMdPath;
         const globalStoragePath = options?.globalStoragePath;
+
+        // Q-01: Clean VS Code-owned entries from all candidate mcp_config.json files
+        // (e.g. ~/.gemini/antigravity-ide/mcp_config.json AND ~/.gemini/antigravity/mcp_config.json)
+        const targetConfigPaths: string[] = options?.mcpConfigPaths
+            ? options.mcpConfigPaths
+            : options?.mcpConfigPath
+            ? [options.mcpConfigPath]
+            : host.mcpConfigPaths && host.mcpConfigPaths.length > 0
+            ? host.mcpConfigPaths
+            : [host.mcpConfigPath];
+
+        const uniqueConfigPaths = Array.from(new Set(targetConfigPaths.map((p) => path.resolve(p))));
         let remainingOrbitKeys = false;
 
-        // 1. Remove orbit MCP server registration from mcp_config.json FIRST
-        // If mcp_config.json has parse errors, abort immediately before modifying GEMINI.md
-        if (fs.existsSync(mcpConfigPath)) {
-            try {
-                const raw = fs.readFileSync(mcpConfigPath, "utf-8");
-                const errors: jsonc.ParseError[] = [];
-                const config = jsonc.parse(raw, errors, { allowTrailingComma: true });
+        // 1. Remove orbit MCP server registration from candidate config files FIRST
+        // If any mcp_config.json has syntax errors, abort immediately before modifying GEMINI.md
+        for (const configPath of uniqueConfigPaths) {
+            if (fs.existsSync(configPath)) {
+                try {
+                    const raw = fs.readFileSync(configPath, "utf-8");
+                    const errors: jsonc.ParseError[] = [];
+                    const config = jsonc.parse(raw, errors, { allowTrailingComma: true });
 
-                // V-03: If mcp_config.json has parse errors, abort immediately to protect user configuration
-                if (errors.length > 0 || config === undefined || typeof config !== "object" || config === null) {
-                    const msg = "[Orbit Uninstall] Syntax errors detected in mcp_config.json. Aborting MCP server cleanup to avoid corrupting user configuration.";
-                    console.error(msg);
-                    result.reason = "Syntax errors detected in mcp_config.json";
+                    // V-03: If mcp_config.json has parse errors, abort immediately to protect user configuration
+                    if (errors.length > 0 || config === undefined || typeof config !== "object" || config === null) {
+                        const msg = `[Orbit Uninstall] Syntax errors detected in ${configPath}. Aborting MCP server cleanup to avoid corrupting user configuration.`;
+                        console.error(msg);
+                        result.reason = `Syntax errors detected in ${configPath}`;
+                        return result;
+                    }
+
+                    if (config.mcpServers && typeof config.mcpServers === "object") {
+                        let updatedRaw = raw;
+                        const formatOpts = { formattingOptions: { insertSpaces: true, tabSize: 2 } };
+                        let backedUp = false;
+
+                        // Only candidates are "orbit" and "antigravity-planner" (N-01)
+                        for (const key of ["orbit", "antigravity-planner"]) {
+                            const entry = config.mcpServers[key];
+                            if (entry && isOrbitServerEntry(key, entry, globalStoragePath, host.isAntigravity)) {
+                                // Backup before modifying using rolling backup (N-01: keep last 3)
+                                if (!backedUp) {
+                                    await createRollingBackup(configPath, 3);
+                                    backedUp = true;
+                                }
+
+                                const edits = jsonc.modify(updatedRaw, ["mcpServers", key], undefined, formatOpts);
+                                updatedRaw = jsonc.applyEdits(updatedRaw, edits);
+                                result.removedServer = true;
+                            }
+                        }
+
+                        if (result.removedServer && updatedRaw !== raw) {
+                            await writeAtomic(configPath, updatedRaw);
+                        }
+
+                        // Check if any orbit keys remain in this config file after removal (P-01, Q-01)
+                        const parsedAfter = jsonc.parse(updatedRaw, [], { allowTrailingComma: true });
+                        if (parsedAfter?.mcpServers && typeof parsedAfter.mcpServers === "object") {
+                            if ("orbit" in parsedAfter.mcpServers || "antigravity-planner" in parsedAfter.mcpServers) {
+                                remainingOrbitKeys = true;
+                            }
+                        }
+                    }
+                } catch (err: unknown) {
+                    console.error(`[Orbit Uninstall] Failed to clean ${configPath}:`, err);
+                    result.reason = (err as Error).message;
                     return result;
                 }
-
-                if (config.mcpServers && typeof config.mcpServers === "object") {
-                    let updatedRaw = raw;
-                    const formatOpts = { formattingOptions: { insertSpaces: true, tabSize: 2 } };
-                    let backedUp = false;
-
-                    // Only candidates are "orbit" and "antigravity-planner" (N-01)
-                    for (const key of ["orbit", "antigravity-planner"]) {
-                        const entry = config.mcpServers[key];
-                        if (entry && isOrbitServerEntry(key, entry, globalStoragePath, host.isAntigravity)) {
-                            // Backup before modifying using rolling backup (N-01: keep last 3)
-                            if (!backedUp) {
-                                await createRollingBackup(mcpConfigPath, 3);
-                                backedUp = true;
-                            }
-
-                            const edits = jsonc.modify(updatedRaw, ["mcpServers", key], undefined, formatOpts);
-                            updatedRaw = jsonc.applyEdits(updatedRaw, edits);
-                            result.removedServer = true;
-                        }
-                    }
-
-                    if (result.removedServer && updatedRaw !== raw) {
-                        await writeAtomic(mcpConfigPath, updatedRaw);
-                    }
-
-                    // P-01: Check if any orbit keys remain in mcp_config.json after removal
-                    const parsedAfter = jsonc.parse(updatedRaw, [], { allowTrailingComma: true });
-                    if (parsedAfter?.mcpServers && typeof parsedAfter.mcpServers === "object") {
-                        if ("orbit" in parsedAfter.mcpServers || "antigravity-planner" in parsedAfter.mcpServers) {
-                            remainingOrbitKeys = true;
-                        }
-                    }
-                }
-            } catch (err: unknown) {
-                console.error("[Orbit Uninstall] Failed to clean mcp_config.json:", err);
-                result.reason = (err as Error).message;
-                return result;
             }
         }
 

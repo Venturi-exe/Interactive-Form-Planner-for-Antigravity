@@ -27,9 +27,12 @@ describe("detectHost", () => {
         const insidersCaller = `C:/Users/cesar/.vscode-insiders/extensions/${realExtensionDirName}/out`;
         expect(detectHost(undefined, insidersCaller).isAntigravity).toBe(false);
 
-        // Antigravity on Windows (.antigravity or AppData/Roaming/Antigravity)
+        // Antigravity on Windows (.antigravity, .antigravity-ide, or AppData/Roaming/Antigravity)
         const antigravityCaller = `C:/Users/cesar/.antigravity/extensions/${realExtensionDirName}/out`;
         expect(detectHost(undefined, antigravityCaller).isAntigravity).toBe(true);
+
+        const antigravityIdeCaller = `C:/Users/cesar/.antigravity-ide/extensions/${realExtensionDirName}/out`;
+        expect(detectHost(undefined, antigravityIdeCaller).isAntigravity).toBe(true);
 
         const antigravityRoamingCaller = `C:/Users/cesar/AppData/Roaming/Antigravity/extensions/${realExtensionDirName}/out`;
         expect(detectHost(undefined, antigravityRoamingCaller).isAntigravity).toBe(true);

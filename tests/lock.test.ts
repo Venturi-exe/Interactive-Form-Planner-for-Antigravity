@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
@@ -205,6 +205,39 @@ describe("lock operations (N-03)", () => {
         // Fresh steal file within staleMs must remain
         expect(fs.existsSync(freshStealFile)).toBe(true);
 
+        await releaseLock(handle);
+    });
+
+    it("retries post-acquire read verification on transient EBUSY and acquires lock without stall (P-03, Q-04)", async () => {
+        const origReadFile = fs.promises.readFile;
+        let callCount = 0;
+
+        // Mock readFile to throw EBUSY once for the post-acquire check
+        const readFileSpy = vi.spyOn(fs.promises, "readFile").mockImplementation(async (path, options) => {
+            if (typeof path === "string" && path.includes("ebusy_test.lock")) {
+                callCount++;
+                if (callCount === 1) {
+                    const ebusyErr = new Error("EBUSY: resource busy or locked");
+                    Object.assign(ebusyErr, { code: "EBUSY" });
+                    throw ebusyErr;
+                }
+            }
+            return origReadFile(path, options);
+        });
+
+        const startTime = Date.now();
+        const handle = await acquireLock("ebusy_test", {
+            brainRoot: mockBrainRoot,
+            maxWaitMs: 5000,
+            staleMs: 30000,
+        });
+
+        // Must succeed promptly via the retry without waiting for the 30s stale window
+        expect(Date.now() - startTime).toBeLessThan(2000);
+        expect(handle).toBeDefined();
+        expect(callCount).toBeGreaterThanOrEqual(2);
+
+        readFileSpy.mockRestore();
         await releaseLock(handle);
     });
 });
