@@ -12,6 +12,12 @@ import { z } from "zod";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+import * as crypto from "crypto";
+import { resolveInside, assertProjectKey, assertSafeFileName, isDenied } from "../core/paths.js";
+
+function getBrainRoot(): string {
+    return process.env.ORBIT_BRAIN_DIR || path.join(os.homedir(), ".orbit-brain");
+}
 
 const IPC_DIR = path.join(os.homedir(), ".antigravity-forms");
 const REQUESTS_DIR = path.join(IPC_DIR, "requests");
@@ -287,12 +293,13 @@ server.tool(
             planningContext,
         };
 
-        const fileId = `report_${taskId}_${Date.now()}`;
+        const reportId = crypto.randomUUID();
+        const fileId = `report_${reportId}`;
         const filePath = path.join(IMPACTS_DIR, `${fileId}.json`);
         fs.writeFileSync(filePath, JSON.stringify(report, null, 2));
 
-        const sanitizedProject = (projectName || "Default").replace(/[^a-zA-Z0-9\-_]/g, "_");
-        const brainRoot = path.join(os.homedir(), ".orbit-brain");
+        const sanitizedProject = assertProjectKey(projectName || "_default");
+        const brainRoot = getBrainRoot();
         const projCartDir = path.join(brainRoot, sanitizedProject, "cartograph");
         let existingReports: { filename: string; summary: string; taskId: string }[] = [];
         if (fs.existsSync(projCartDir)) {
@@ -355,7 +362,7 @@ server.tool(
         updates: z.record(z.any()).optional().describe("Partial updates for update operations.")
     },
     async ({ action, projectName, filePath, content, filename, sourceProject, targetProject, filenames, updates }) => {
-        const brainRoot = path.join(os.homedir(), ".orbit-brain");
+        const brainRoot = getBrainRoot();
 
         if (action === "list_projects") {
             if (!fs.existsSync(brainRoot)) {
@@ -377,10 +384,7 @@ server.tool(
             if (!filePath) {
                 throw new Error("filePath is required for read_file action");
             }
-            const fullPath = path.resolve(brainRoot, filePath);
-            if (!fullPath.startsWith(brainRoot)) {
-                throw new Error("Path traversal detected or access outside brain root is denied");
-            }
+            const fullPath = resolveInside(brainRoot, filePath);
             if (!fs.existsSync(fullPath)) {
                 throw new Error(`File not found: ${filePath}`);
             }
@@ -399,10 +403,10 @@ server.tool(
             if (content === undefined) {
                 throw new Error("content is required for write_file action");
             }
-            const fullPath = path.resolve(brainRoot, filePath);
-            if (!fullPath.startsWith(brainRoot)) {
-                throw new Error("Path traversal detected or access outside brain root is denied");
+            if (isDenied(filePath)) {
+                throw new Error(`Write access denied for administrative or protected path: ${filePath}`);
             }
+            const fullPath = resolveInside(brainRoot, filePath);
             try {
                 const dir = path.dirname(fullPath);
                 fs.mkdirSync(dir, { recursive: true });
