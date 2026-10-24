@@ -100,7 +100,7 @@ To make my Orbit-Brain completely customized for my actual projects, workflows, 
      - `skills_reference.md`: Mapping specialized framework prefixes, skill rules, or custom instructions.
 
 5. Generate Project-Specific Knowledge Layers
-   - For each project directory registered under `~/.orbit-brain/projects/`, establish the long-term memory structures:
+   - For each project directory registered in the brain (under `projects/`), establish the long-term memory structures:
      - `memories/INDEX.md`: A mapped catalog linking concepts, tags, and past session summaries to specific memory observation files.
      - `memories/facts/`: Immutable truths about the project architecture, design system files, configurations, and user profile information.
      - `memories/PROTOCOL.md`: The rule system dictating how observations must be captured and logged in the session directory.

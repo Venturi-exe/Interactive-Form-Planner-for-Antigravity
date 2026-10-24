@@ -19,7 +19,7 @@ import { moveToTrash } from "../core/trash.js";
 
 const server = new McpServer({
     name: "orbit",
-    version: "0.2.7",
+    version: "0.4.0",
 });
 
 function getIpcDirs() {
