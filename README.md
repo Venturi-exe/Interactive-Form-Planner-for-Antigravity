@@ -56,13 +56,13 @@ To configure your personalized Orbit-Brain using all your prior project history,
 #### Orbit-Brain Configuration Prompt
 
 ```text
-You are an expert AI software engineer and system architect. Your goal is to fully bootstrap and configure my local persistent memory system, known as "Orbit-Brain," which is stored at the root `~/.orbit-brain/` (or `C:\.orbit-brain` on Windows).
+You are an expert AI software engineer and system architect. Your goal is to fully bootstrap and configure my local persistent memory system, known as "Orbit-Brain," which is stored at the root `~/.orbit-brain/`.
 
 To make my Orbit-Brain completely customized for my actual projects, workflows, preferences, and workspace history, you must perform a comprehensive deep search and analysis of my prior work. Follow this step-by-step plan:
 
 1. Locate Workspace History & IDE Data
    - Identify active VS Code workspace folders and currently open projects.
-   - Search the local filesystem for the Antigravity App Data directory. On Windows, this is typically located under `C:\Users\<your-username>\.gemini\antigravity-ide` (check the active session parameters or environment paths).
+   - Search the local filesystem for the Antigravity App Data directory (typically under `~/.gemini/antigravity-ide`).
    - In that App Data folder, locate the `brain/` directory. This directory contains directories named with past conversation IDs, each containing files like `task.md`, `implementation_plan.md`, `walkthrough.md`, `scratch/` files, and `.system_generated/logs/transcript.jsonl` (the full history of my past conversations with the AI).
    - Locate global agent config files in the home directory or workspace, such as `~/.gemini/GEMINI.md`.
 
@@ -80,7 +80,7 @@ To make my Orbit-Brain completely customized for my actual projects, workflows, 
    - Define my core workflows, preferences, environment variables, recurring tasks, and technology targets.
 
 4. Initialize the Orbit-Brain Architecture
-   - Ensure the central brain root is mapped to the standard user Orbit-Brain path (e.g. `C:\.orbit-brain` or `~/.orbit-brain/`).
+   - Ensure the central brain root is mapped to the standard user Orbit-Brain path (`~/.orbit-brain/`).
    - Create and populate the global coordination files:
      - `BRAIN_ARCHITECTURE.md`: Detailing the exact directory tree structure and the Coherence and Maintenance Protocol for keeping the brain in sync.
      - `global_context_summary.md`: Documenting the global environment setup (OS, shell, browser, package managers, tools) and my personalized developer profile.
