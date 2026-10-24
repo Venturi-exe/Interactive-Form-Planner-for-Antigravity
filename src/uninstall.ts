@@ -74,7 +74,11 @@ export function isOrbitServerEntry(
         if (gsIdx !== -1 && gsIdx + 1 < segments.length) {
             const extFolder = segments[gsIdx + 1];
             // P-02: Require folder right after globalStorage to match the extension package ID case-insensitively
-            if (extFolder === "vntrcorp.antigravity-interactive-form-planner-planning-tool") {
+            const isOrbitExtFolder =
+                extFolder === "vntrcorp.orbit" ||
+                extFolder === "vntrcorp.antigravity-interactive-form-planner-planning-tool" ||
+                extFolder === "vntrcorp.antigravity-pre-execution-form-planner";
+            if (isOrbitExtFolder) {
                 const storageOwner = getStorageOwner(arg0);
                 if (hostIsAntigravity === false) {
                     // Caller is stock VS Code: only match if storage explicitly belongs to VS Code

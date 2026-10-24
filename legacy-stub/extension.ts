@@ -6,7 +6,7 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
     }
 
-    const message = "Orbit: The legacy 'Antigravity Pre-Execution Form Planner' extension is deprecated and replaced by Orbit.";
+    const message = "Orbit: This legacy extension is deprecated and replaced by Orbit.";
     const installOrbit = "Install Orbit";
     const uninstallThis = "Uninstall This Extension";
 
@@ -15,12 +15,12 @@ export function activate(context: vscode.ExtensionContext): void {
             try {
                 await vscode.commands.executeCommand(
                     "workbench.extensions.installExtension",
-                    "VNTRCORP.antigravity-interactive-form-planner-planning-tool"
+                    "VNTRCORP.orbit"
                 );
                 vscode.window.showInformationMessage("Orbit installed successfully.");
             } catch {
                 vscode.env.openExternal(
-                    vscode.Uri.parse("https://open-vsx.org/extension/VNTRCORP/antigravity-interactive-form-planner-planning-tool")
+                    vscode.Uri.parse("https://open-vsx.org/extension/VNTRCORP/orbit")
                 );
             }
         } else if (selection === uninstallThis) {

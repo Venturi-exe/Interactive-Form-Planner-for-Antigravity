@@ -23,6 +23,7 @@ export default tseslint.config(
       'src/webview/*.map',
       'vitest.config.*',
       'legacy-stub/**',
+      'legacy-stub-interactive/**',
     ],
   }
 );

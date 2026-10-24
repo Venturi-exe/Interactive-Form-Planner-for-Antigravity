@@ -1,0 +1,4 @@
+.vscode/**
+.vscode-test/**
+extension.ts
+*.map

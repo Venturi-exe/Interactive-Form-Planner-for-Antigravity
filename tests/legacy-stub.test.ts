@@ -34,4 +34,29 @@ describe("legacy-stub extension", () => {
         expect(fs.existsSync(path.join(stubDir, "LICENSE.txt"))).toBe(true);
         expect(fs.existsSync(path.join(stubDir, "README.md"))).toBe(true);
     });
+
+    describe("legacy-stub-interactive extension", () => {
+        const interactiveStubDir = path.join(__dirname, "..", "legacy-stub-interactive");
+        const interactivePkgPath = path.join(interactiveStubDir, "package.json");
+        const interactiveExtJsPath = path.join(interactiveStubDir, "extension.js");
+
+        it("has expected manifest properties for antigravity-interactive-form-planner-planning-tool", () => {
+            expect(fs.existsSync(interactivePkgPath)).toBe(true);
+            const manifest = JSON.parse(fs.readFileSync(interactivePkgPath, "utf-8"));
+
+            expect(manifest.name).toBe("antigravity-interactive-form-planner-planning-tool");
+            expect(manifest.publisher).toBe("VNTRCORP");
+            expect(manifest.version).toBe("0.2.7");
+            expect(manifest.main).toBe("./extension.js");
+            expect(manifest.activationEvents).toEqual(["onStartupFinished"]);
+            expect(manifest.contributes).toBeUndefined();
+        });
+
+        it("has compiled extension.js bundle pointing to VNTRCORP.orbit", () => {
+            expect(fs.existsSync(interactiveExtJsPath)).toBe(true);
+            const content = fs.readFileSync(interactiveExtJsPath, "utf-8");
+            expect(content).toContain("VNTRCORP.orbit");
+            expect(content).toContain("workbench.extensions.installExtension");
+        });
+    });
 });

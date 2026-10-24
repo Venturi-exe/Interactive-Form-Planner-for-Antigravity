@@ -91,12 +91,20 @@ async function buildAll() {
         },
         logLevel: 'info',
       },
-      // 6. Legacy stub bundle
+      // 6. Legacy stub 1 (antigravity-pre-execution-form-planner)
       {
         ...commonNodeConfig,
         sourcemap: false,
         entryPoints: [path.join(__dirname, 'legacy-stub', 'extension.ts')],
         outfile: path.join(__dirname, 'legacy-stub', 'extension.js'),
+        external: ['vscode'],
+      },
+      // 7. Legacy stub 2 (antigravity-interactive-form-planner-planning-tool)
+      {
+        ...commonNodeConfig,
+        sourcemap: false,
+        entryPoints: [path.join(__dirname, 'legacy-stub', 'extension.ts')],
+        outfile: path.join(__dirname, 'legacy-stub-interactive', 'extension.js'),
         external: ['vscode'],
       },
     ];

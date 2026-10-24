@@ -260,6 +260,9 @@ describe("runUninstall and isOrbitServerEntry (N-01, N-02)", () => {
         const genuineVsCodePath = "C:/Users/test/AppData/Roaming/Code/User/globalStorage/vntrcorp.antigravity-interactive-form-planner-planning-tool/mcp-server/index.js";
         expect(isOrbitServerEntry("orbit", { args: [genuineVsCodePath] }, undefined, false)).toBe(true);
 
+        const genuineOrbitVsCodePath = "C:/Users/test/AppData/Roaming/Code/User/globalStorage/vntrcorp.orbit/mcp-server/index.js";
+        expect(isOrbitServerEntry("orbit", { args: [genuineOrbitVsCodePath] }, undefined, false)).toBe(true);
+
         // Entry pointing to genuine extension storage for Antigravity: does NOT match when hostIsAntigravity is false
         const genuineAntigravityPath = "C:/Users/test/AppData/Roaming/Antigravity/User/globalStorage/vntrcorp.antigravity-interactive-form-planner-planning-tool/mcp-server/index.js";
         expect(isOrbitServerEntry("orbit", { args: [genuineAntigravityPath] }, undefined, false)).toBe(false);

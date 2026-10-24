@@ -9,6 +9,7 @@
 !src/webview/form.js
 !src/webview/form.css
 !src/webview/vendor/cytoscape.min.js
+!assets/icon.png
 !assets/tab-*.png
 !media/**
 !package.json
