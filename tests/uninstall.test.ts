@@ -2,26 +2,29 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import { runUninstall } from "../src/uninstall";
+import { runUninstall, isOrbitServerEntry } from "../src/uninstall";
 import * as hostModule from "../src/core/host";
 
-describe("runUninstall", () => {
+describe("runUninstall and isOrbitServerEntry (N-01, N-02)", () => {
     let tempDir: string;
     let mockMcpConfig: string;
     let mockGeminiMd: string;
+    let mockGlobalStorage: string;
 
     beforeEach(() => {
         tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "orbit-uninstall-test-"));
         mockMcpConfig = path.join(tempDir, "mcp_config.json");
         mockGeminiMd = path.join(tempDir, "GEMINI.md");
+        mockGlobalStorage = path.join(tempDir, "globalStorage", "orbit");
+        fs.mkdirSync(mockGlobalStorage, { recursive: true });
 
-        vi.spyOn(hostModule, "detectHost").mockReturnValue({
-            isAntigravity: true,
+        vi.spyOn(hostModule, "detectHost").mockImplementation((appName?: string) => ({
+            isAntigravity: Boolean(appName && /antigravity/i.test(appName)),
             geminiDir: tempDir,
             configDir: tempDir,
             mcpConfigPath: mockMcpConfig,
             geminiMdPath: mockGeminiMd,
-        });
+        }));
     });
 
     afterEach(() => {
@@ -35,51 +38,78 @@ describe("runUninstall", () => {
         const malformed = `{\n  "mcpServers": {\n    "orbit": { unclosed syntax\n`;
         fs.writeFileSync(mockMcpConfig, malformed, "utf-8");
 
-        await runUninstall();
+        const res = await runUninstall();
 
-        // Must remain exactly unchanged
+        expect(res.success).toBe(false);
+        expect(res.reason).toContain("Syntax errors detected");
         expect(fs.readFileSync(mockMcpConfig, "utf-8")).toBe(malformed);
-        expect(fs.existsSync(`${mockMcpConfig}.orbit.bak`)).toBe(false);
     });
 
-    it("preserves comments, removes orbit server, and creates backup upon clean uninstall", async () => {
+    it("never deletes other MCP servers like git, fetch, or uvx mcp-server-git (N-01)", async () => {
         const initial = `{
-            // Important user comments
             "mcpServers": {
-                "other": { "command": "py", "args": ["app.py"] },
+                "git": { "command": "uvx", "args": ["mcp-server-git"] },
+                "fetch": { "command": "uvx", "args": ["mcp-server-fetch"] },
                 "orbit": {
                     "command": "node",
-                    "args": ["C:/path/to/orbit/mcp-server/index.js"]
+                    "args": ["${mockGlobalStorage.replace(/\\/g, "/")}/mcp-server/index.js"]
                 }
             }
         }`;
         fs.writeFileSync(mockMcpConfig, initial, "utf-8");
 
-        await runUninstall();
+        const res = await runUninstall({ globalStoragePath: mockGlobalStorage });
 
-        expect(fs.existsSync(`${mockMcpConfig}.orbit.bak`)).toBe(true);
-        expect(fs.readFileSync(`${mockMcpConfig}.orbit.bak`, "utf-8")).toBe(initial);
+        expect(res.success).toBe(true);
+        expect(res.removedServer).toBe(true);
 
-        const contentAfter = fs.readFileSync(mockMcpConfig, "utf-8");
-        expect(contentAfter).toContain("// Important user comments");
-        expect(contentAfter).toContain('"other"');
-        expect(contentAfter).not.toContain('"orbit"');
+        const after = JSON.parse(fs.readFileSync(mockMcpConfig, "utf-8"));
+        expect(after.mcpServers.git).toBeDefined();
+        expect(after.mcpServers.git.args).toEqual(["mcp-server-git"]);
+        expect(after.mcpServers.fetch).toBeDefined();
+        expect(after.mcpServers.orbit).toBeUndefined();
     });
 
-    it("does not remove mcpServers.orbit if it does not point to Orbit server", async () => {
+    it("creates rolling timestamped backups and retains at most 3 (N-01)", async () => {
         const initial = `{
             "mcpServers": {
                 "orbit": {
-                    "command": "unrelated-tool",
-                    "args": ["some-other-app.js"]
+                    "command": "node",
+                    "args": ["${mockGlobalStorage.replace(/\\/g, "/")}/mcp-server/index.js"]
                 }
             }
         }`;
         fs.writeFileSync(mockMcpConfig, initial, "utf-8");
 
-        await runUninstall();
+        // Seed 4 existing backups
+        for (let i = 1; i <= 4; i++) {
+            fs.writeFileSync(`${mockMcpConfig}.orbit.bak.${1000 + i}`, "backup", "utf-8");
+        }
 
-        const contentAfter = fs.readFileSync(mockMcpConfig, "utf-8");
-        expect(contentAfter).toContain("unrelated-tool");
+        await runUninstall({ globalStoragePath: mockGlobalStorage });
+
+        const files = fs.readdirSync(tempDir);
+        const backups = files.filter((f) => f.includes(".orbit.bak."));
+        expect(backups.length).toBeLessThanOrEqual(3);
+    });
+
+    it("isOrbitServerEntry returns true only for known Orbit server paths (N-01)", () => {
+        // True cases
+        expect(isOrbitServerEntry("orbit", { args: [path.join(mockGlobalStorage, "mcp-server", "index.js")] }, mockGlobalStorage)).toBe(true);
+        expect(isOrbitServerEntry("antigravity-planner", { args: [path.join(mockGlobalStorage, "index.js")] }, mockGlobalStorage)).toBe(true);
+
+        // False cases: other keys, other paths
+        expect(isOrbitServerEntry("git", { args: ["mcp-server-git"] }, mockGlobalStorage)).toBe(false);
+        expect(isOrbitServerEntry("orbit", { args: ["C:/other/random/path.js"] }, mockGlobalStorage)).toBe(false);
+        expect(isOrbitServerEntry("orbit", { command: "uvx", args: ["mcp-server-git"] }, mockGlobalStorage)).toBe(false);
+    });
+
+    it("does not remove GEMINI.md rules when running from stock VS Code (N-02)", async () => {
+        fs.writeFileSync(mockGeminiMd, "<!-- ORBIT_START_v1 -->\nrules\n<!-- ORBIT_END_v1 -->\n", "utf-8");
+
+        const res = await runUninstall({ appName: "Visual Studio Code" });
+
+        expect(res.removedRules).toBe(false);
+        expect(fs.readFileSync(mockGeminiMd, "utf-8")).toContain("ORBIT_START_v1");
     });
 });

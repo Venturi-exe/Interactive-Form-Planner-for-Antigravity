@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import { acquireLock, releaseLock, withLock } from "../src/core/lock.js";
+import { acquireLock, releaseLock, withLock, LockHandle } from "../src/core/lock.js";
 
-describe("lock operations", () => {
+describe("lock operations (N-03)", () => {
     let mockBrainRoot: string;
 
     beforeEach(() => {
@@ -23,7 +23,29 @@ describe("lock operations", () => {
 
         const content = JSON.parse(fs.readFileSync(handle.lockPath, "utf-8"));
         expect(content.pid).toBe(process.pid);
+        expect(content.token).toBe(handle.token);
 
+        await releaseLock(handle);
+        expect(fs.existsSync(handle.lockPath)).toBe(false);
+    });
+
+    it("releaseLock only unlinks if lock token matches (N-03)", async () => {
+        const handle = await acquireLock("token_test", { brainRoot: mockBrainRoot });
+        expect(fs.existsSync(handle.lockPath)).toBe(true);
+
+        // Simulate another process stealing or replacing lock with a different token
+        const fakeHandle: LockHandle = {
+            lockName: handle.lockName,
+            lockPath: handle.lockPath,
+            token: "different-token-uuid",
+            acquiredAt: Date.now(),
+        };
+
+        // Releasing with fakeHandle must NOT delete the real lock file!
+        await releaseLock(fakeHandle);
+        expect(fs.existsSync(handle.lockPath)).toBe(true);
+
+        // Releasing with the genuine handle must delete it
         await releaseLock(handle);
         expect(fs.existsSync(handle.lockPath)).toBe(false);
     });
@@ -67,7 +89,7 @@ describe("lock operations", () => {
         const staleLockPath = path.join(locksDir, "stale_op.lock");
 
         // Create a stale lock from 1 minute ago
-        const staleMeta = { pid: 999999, acquiredAt: Date.now() - 60000 };
+        const staleMeta = { pid: 999999, token: "stale-token", ts: Date.now() - 60000, acquiredAt: Date.now() - 60000 };
         fs.writeFileSync(staleLockPath, JSON.stringify(staleMeta), "utf-8");
 
         const handle = await acquireLock("stale_op", {

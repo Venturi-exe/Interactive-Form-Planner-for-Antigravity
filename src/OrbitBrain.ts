@@ -18,6 +18,7 @@ try {
 
 export class OrbitBrain {
   private readonly brainRoot: string;
+  private isInitialized = false;
 
   constructor() {
     this.brainRoot = process.env.ORBIT_BRAIN_DIR || path.join(os.homedir(), ".orbit-brain");
@@ -39,7 +40,23 @@ export class OrbitBrain {
           await this.migrateFromLegacy();
 
           // 3. Migrate brain to Layout v3
-          await migrateToLayoutV3(this.brainRoot);
+          const migrationRes = await migrateToLayoutV3(this.brainRoot);
+          if (migrationRes.errors && migrationRes.errors.length > 0 && vscodeModule && vscodeModule.window) {
+            vscodeModule.window.showWarningMessage(
+              "Orbit: Layout v3 migration completed with warnings. Some folders could not be migrated.",
+              "Open Migration Log"
+            ).then((action: string | undefined) => {
+              if (action === "Open Migration Log") {
+                const journalPath = path.join(this.brainRoot, ".journal", "migration-v3.json");
+                if (fs.existsSync(journalPath)) {
+                  vscodeModule.workspace.openTextDocument(journalPath).then((doc: unknown) => {
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    vscodeModule.window.showTextDocument(doc as any);
+                  });
+                }
+              }
+            });
+          }
 
           // 4. Create or update summary files atomically
           const brainArchPath = path.join(this.brainRoot, "BRAIN_ARCHITECTURE.md");
@@ -101,52 +118,64 @@ Global environment and tooling context. Updated automatically by the agent.
             await writeAtomic(globalContextPath, globalContent);
           }
 
-          this.updateGlobalContextEnvironment();
+          await this.updateGlobalContextEnvironment();
         },
-        { brainRoot: this.brainRoot }
+        { brainRoot: this.brainRoot, maxWaitMs: 60000, pollIntervalMs: 500 }
       );
+      this.isInitialized = true;
     } catch (err) {
+      // N-03: If lock timed out or failed, check if another window completed migration (.layout-version = 3)
+      const versionFile = path.join(this.brainRoot, ".layout-version");
+      if (fs.existsSync(versionFile)) {
+        try {
+          const ver = fs.readFileSync(versionFile, "utf-8").trim();
+          if (ver === "3") {
+            this.isInitialized = true;
+            return;
+          }
+        } catch { /* skip */ }
+      }
+      this.isInitialized = false;
       console.warn("OrbitBrain initialization completed with warning:", err);
     }
   }
 
-  /** Resolves project root directory supporting both Layout v3 and legacy Layout v2. */
+  /** Resolves project root directory supporting both Layout v3 and legacy Layout v2 (N-05). */
   public getProjectDir(projectName: string): string {
-    const key = this.sanitizeProjectName(projectName).toLowerCase();
-    const v3Path = path.join(this.brainRoot, "projects", key);
+    const key = this.sanitizeProjectName(projectName);
+    const targetSubPath = path.join("projects", key);
+    const v3Path = resolveInside(this.brainRoot, targetSubPath);
     if (fs.existsSync(v3Path)) {
       return v3Path;
     }
-    const legacyPath = path.join(this.brainRoot, key);
-    if (fs.existsSync(legacyPath)) {
-      return legacyPath;
-    }
+    try {
+      const legacyPath = resolveInside(this.brainRoot, key);
+      if (fs.existsSync(legacyPath)) {
+        return legacyPath;
+      }
+    } catch { /* skip */ }
     return v3Path;
   }
 
-  /** Creates a project directory with full memory scaffold if it doesn't exist. */
+  /** Creates a project directory with full memory scaffold if it doesn't exist (N-05, N-11, N-12, N-15). */
   public ensureProject(projectName: string): void {
     const sanitized = this.sanitizeProjectName(projectName);
     if (!sanitized) return;
 
-    const projDir = path.join(this.brainRoot, "projects", sanitized.toLowerCase());
-    const reportsDir = path.join(projDir, "reports");
+    // N-05: Route through resolveInside
+    const projDir = resolveInside(this.brainRoot, path.join("projects", sanitized));
     const cartographDir = path.join(projDir, "cartograph");
     const memoriesDir = path.join(projDir, "memories");
     const sessionsDir = path.join(memoriesDir, "sessions");
     const featuresDir = path.join(memoriesDir, "features");
     const tasksDir = path.join(memoriesDir, "tasks");
-    const conceptsDir = path.join(memoriesDir, "concepts");
-    const factsDir = path.join(memoriesDir, "facts");
     const archiveDir = path.join(projDir, "archive");
 
-    fs.mkdirSync(reportsDir, { recursive: true });
+    // N-11 & N-12: Scaffold only canonical layout directories (no reports/ duplication, no concepts/facts)
     fs.mkdirSync(cartographDir, { recursive: true });
     fs.mkdirSync(sessionsDir, { recursive: true });
     fs.mkdirSync(featuresDir, { recursive: true });
     fs.mkdirSync(tasksDir, { recursive: true });
-    fs.mkdirSync(conceptsDir, { recursive: true });
-    fs.mkdirSync(factsDir, { recursive: true });
     fs.mkdirSync(archiveDir, { recursive: true });
 
     const protocolPath = path.join(memoriesDir, "PROTOCOL.md");
@@ -172,14 +201,16 @@ Example Timeline Entry:
 1. **Capture**: Consolidate session work into topic files in \`memories/features/\` (for long-lived capabilities) or \`memories/tasks/\` (for specific fixes/issues).
 2. **Append**: If a file for the topic exists, append the new changes chronologically; do not create duplicate files.
 3. **Index**: Update \`memories/INDEX.md\`'s Active Topics section to link the modified files.
-4. **Facts**: Discoveries or immutable truths go into \`memories/facts/\`.
 
 ## 3. Storage Hierarchy
 - \`features/\`: Topic files for features, components, UI layouts, and styling.
 - \`tasks/\`: Topic files for specific tasks, issues, and bug fixes.
-- \`facts/\`: Atomic, immutable truths about the project.
+- \`sessions/\`: Working session logs and context records.
 `;
-      fs.writeFileSync(protocolPath, protocolContent, "utf-8");
+      // N-15: Atomic write
+      writeAtomic(protocolPath, protocolContent).catch((err) => {
+        console.error("Failed atomic write of PROTOCOL.md:", err);
+      });
     }
 
     const indexPath = path.join(memoriesDir, "INDEX.md");
@@ -189,7 +220,7 @@ Example Timeline Entry:
 This index maps active topics and tags to their respective memory files. Update this when creating or appending to a topic file.
 
 ## Project Map
-- **${sanitized.toLowerCase()}**: This project directory.
+- **${sanitized}**: This project directory.
 
 ## Concepts and Tags
 [Agent-populated during "update memory system"]
@@ -201,7 +232,10 @@ This index maps active topics and tags to their respective memory files. Update 
 ### Tasks & Bug Fixes
 [Agent-populated during "update memory system"]
 `;
-      fs.writeFileSync(indexPath, indexContent, "utf-8");
+      // N-15: Atomic write
+      writeAtomic(indexPath, indexContent).catch((err) => {
+        console.error("Failed atomic write of INDEX.md:", err);
+      });
     }
 
     this.updateGlobalContextProjects();
@@ -254,6 +288,10 @@ This index maps active topics and tags to their respective memory files. Update 
 
   /** Auto-detects projects from VS Code workspace folders and ensures they exist in the brain. */
   public syncWorkspaceProjects(): void {
+    if (!this.isInitialized) {
+      return;
+    }
+
     const folders = vscodeModule?.workspace?.workspaceFolders;
     if (!folders) return;
 
@@ -269,7 +307,7 @@ This index maps active topics and tags to their respective memory files. Update 
     return normalizeProjectKey(name);
   }
 
-  private updateGlobalContextProjects(): void {
+  private async updateGlobalContextProjects(): Promise<void> {
     const globalContextPath = path.join(this.brainRoot, "global_context_summary.md");
     if (!fs.existsSync(globalContextPath)) return;
 
@@ -284,13 +322,14 @@ This index maps active topics and tags to their respective memory files. Update 
       } else {
         content += `\n\n## Registered Projects\n${projectsList}\n`;
       }
-      fs.writeFileSync(globalContextPath, content, "utf-8");
+      // N-15: Atomic write
+      await writeAtomic(globalContextPath, content);
     } catch (e) {
       console.error("Failed to update global_context_summary.md:", e);
     }
   }
 
-  private updateGlobalContextEnvironment(): void {
+  private async updateGlobalContextEnvironment(): Promise<void> {
     const globalContextPath = path.join(this.brainRoot, "global_context_summary.md");
     if (!fs.existsSync(globalContextPath)) return;
 
@@ -317,7 +356,8 @@ This index maps active topics and tags to their respective memory files. Update 
       } else {
         content += `\n\n## Environment\n${envBlock}\n`;
       }
-      fs.writeFileSync(globalContextPath, content, "utf-8");
+      // N-15: Atomic write
+      await writeAtomic(globalContextPath, content);
     } catch (e) {
       console.error("Failed to update environment in global_context_summary.md:", e);
     }

@@ -101,6 +101,16 @@
       }
     ],
     "menus": {
+      "commandPalette": [
+        {
+          "command": "orbit.testPlanner",
+          "when": "inDevelopment"
+        },
+        {
+          "command": "orbit.testCartograph",
+          "when": "inDevelopment"
+        }
+      ],
       "view/title": [
         {
           "command": "orbit.openMainTab",

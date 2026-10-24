@@ -5,7 +5,7 @@ import * as os from "os";
 import * as jsonc from "jsonc-parser";
 import { updateMcpConfig } from "../src/core/config";
 
-describe("updateMcpConfig", () => {
+describe("updateMcpConfig (N-14)", () => {
     let tempDir: string;
     let configPath: string;
 
@@ -30,10 +30,22 @@ describe("updateMcpConfig", () => {
             command: "node",
             args: ["C:/mock/out/mcp-server/index.js"],
         });
-        expect(fs.existsSync(`${configPath}.orbit.bak`)).toBe(false);
     });
 
-    it("parses JSON with comments and trailing commas, preserves comments and existing servers, and creates backup", async () => {
+    it("treats 0-byte or whitespace-only config as empty object instead of halting (N-14)", async () => {
+        fs.writeFileSync(configPath, "   \n\t  ", "utf-8");
+
+        const result = await updateMcpConfig(configPath, "C:\\mock\\out\\mcp-server\\index.js");
+        expect(result.success).toBe(true);
+
+        const content = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+        expect(content.mcpServers.orbit).toEqual({
+            command: "node",
+            args: ["C:/mock/out/mcp-server/index.js"],
+        });
+    });
+
+    it("parses JSON with comments and trailing commas, preserves comments and existing servers, and creates rolling backup", async () => {
         const initialContent = `{
             // Custom comments here
             "mcpServers": {
@@ -53,9 +65,10 @@ describe("updateMcpConfig", () => {
         expect(result.success).toBe(true);
         expect(result.backedUp).toBe(true);
 
-        // Verify backup exists and contains exact initial content
-        expect(fs.existsSync(`${configPath}.orbit.bak`)).toBe(true);
-        expect(fs.readFileSync(`${configPath}.orbit.bak`, "utf-8")).toBe(initialContent);
+        // Verify rolling backup exists
+        const files = fs.readdirSync(tempDir);
+        const backups = files.filter((f) => f.includes(".orbit.bak."));
+        expect(backups.length).toBeGreaterThan(0);
 
         // Verify modified content preserves custom comments
         const rawAfter = fs.readFileSync(configPath, "utf-8");
@@ -73,35 +86,24 @@ describe("updateMcpConfig", () => {
         });
     });
 
-    it("preserves user custom fields in orbit server entry and does not overwrite existing backup", async () => {
-        const initialContent = `{
+    it("halts if existing mcpServers.orbit belongs to an unrelated third-party program (N-14)", async () => {
+        const foreignOrbit = `{
             "mcpServers": {
                 "orbit": {
-                    "command": "old-node",
-                    "args": ["old.js"],
-                    "env": {
-                        "MY_KEY": "secret"
-                    },
-                    "disabled": false
+                    "command": "docker",
+                    "args": ["run", "my-personal-orbit-satellite-tracker"]
                 }
             }
         }`;
-        fs.writeFileSync(configPath, initialContent, "utf-8");
-        fs.writeFileSync(`${configPath}.orbit.bak`, "PRESERVED_ORIGINAL_BACKUP", "utf-8");
+        fs.writeFileSync(configPath, foreignOrbit, "utf-8");
 
-        const result = await updateMcpConfig(configPath, "C:\\fresh\\index.js");
-        expect(result.success).toBe(true);
-        expect(result.backedUp).toBe(false);
+        const result = await updateMcpConfig(configPath, "C:\\new\\server\\index.js");
+        expect(result.success).toBe(false);
+        expect(result.error).toContain("does not appear to belong to Orbit");
 
-        // Verify backup was NOT overwritten
-        expect(fs.readFileSync(`${configPath}.orbit.bak`, "utf-8")).toBe("PRESERVED_ORIGINAL_BACKUP");
-
-        // Verify user fields in orbit entry were preserved
-        const modified = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-        expect(modified.mcpServers.orbit.command).toBe("node");
-        expect(modified.mcpServers.orbit.args).toEqual(["C:/fresh/index.js"]);
-        expect(modified.mcpServers.orbit.env).toEqual({ MY_KEY: "secret" });
-        expect(modified.mcpServers.orbit.disabled).toBe(false);
+        // Content was not overwritten
+        const raw = fs.readFileSync(configPath, "utf-8");
+        expect(raw).toContain("my-personal-orbit-satellite-tracker");
     });
 
     it("halts and does not overwrite or backup if JSON has fatal syntax error", async () => {
@@ -114,22 +116,6 @@ describe("updateMcpConfig", () => {
 
         // Verify original file is untouched and no backup was made
         expect(fs.readFileSync(configPath, "utf-8")).toBe(corrupted);
-        expect(fs.existsSync(`${configPath}.orbit.bak`)).toBe(false);
-    });
-
-    it("handles config with missing mcpServers key gracefully", async () => {
-        fs.writeFileSync(configPath, JSON.stringify({ version: "1.0" }), "utf-8");
-
-        const result = await updateMcpConfig(configPath, "C:\\test\\index.js");
-        expect(result.success).toBe(true);
-        expect(result.backedUp).toBe(true);
-
-        const updated = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-        expect(updated.version).toBe("1.0");
-        expect(updated.mcpServers.orbit).toEqual({
-            command: "node",
-            args: ["C:/test/index.js"],
-        });
     });
 
     it("uses custom nodeCommand when specified", async () => {

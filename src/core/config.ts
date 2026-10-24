@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as jsonc from "jsonc-parser";
-import { writeAtomic } from "./fsx.js";
+import { writeAtomic, createRollingBackup } from "./fsx.js";
 
 export interface UpdateMcpConfigResult {
     success: boolean;
@@ -13,7 +13,7 @@ export interface UpdateMcpConfigResult {
  * Safely updates mcp_config.json to register the Orbit MCP server.
  * Uses jsonc-parser modify/applyEdits to preserve comments, formatting, and other servers.
  * If the existing file has syntax errors, halts immediately without modifying or overwriting.
- * If modifying an existing file, creates a backup file at <path>.orbit.bak if one does not already exist.
+ * Creates a rolling timestamped backup (keeping the last 3) before making changes.
  */
 export async function updateMcpConfig(
     mcpConfigPath: string,
@@ -25,6 +25,12 @@ export async function updateMcpConfig(
 
     if (fs.existsSync(mcpConfigPath)) {
         let raw = fs.readFileSync(mcpConfigPath, "utf-8");
+
+        // N-14: Treat 0-byte or whitespace-only mcp_config.json as empty object instead of halting
+        if (raw.trim().length === 0) {
+            raw = "{\n  \"mcpServers\": {}\n}\n";
+        }
+
         const errors: jsonc.ParseError[] = [];
         const parsed = jsonc.parse(raw, errors, { allowTrailingComma: true });
 
@@ -38,18 +44,15 @@ export async function updateMcpConfig(
             };
         }
 
-        // Backup existing file before modifications if backup does not already exist (V-09: preserve original)
-        const backupPath = `${mcpConfigPath}.orbit.bak`;
-        if (!fs.existsSync(backupPath)) {
-            try {
-                fs.copyFileSync(mcpConfigPath, backupPath);
-                backedUp = true;
-            } catch (err: unknown) {
-                return {
-                    success: false,
-                    error: `Failed to create backup at ${backupPath}: ${(err as Error).message}`,
-                };
-            }
+        // Backup existing file before modifications using rolling backups (N-01 / N-14: keep last 3)
+        try {
+            await createRollingBackup(mcpConfigPath, 3);
+            backedUp = true;
+        } catch (err: unknown) {
+            return {
+                success: false,
+                error: `Failed to create backup for ${mcpConfigPath}: ${(err as Error).message}`,
+            };
         }
 
         const formatOpts = { formattingOptions: { insertSpaces: true, tabSize: 2 } };
@@ -58,6 +61,28 @@ export async function updateMcpConfig(
         if (!parsed.mcpServers || typeof parsed.mcpServers !== "object" || Array.isArray(parsed.mcpServers)) {
             const edits = jsonc.modify(raw, ["mcpServers"], {}, formatOpts);
             raw = jsonc.applyEdits(raw, edits);
+        }
+
+        // N-14: Check if existing orbit server belongs to Orbit before overwriting
+        if (parsed.mcpServers && parsed.mcpServers["orbit"]) {
+            const existingOrbit = parsed.mcpServers["orbit"];
+            if (typeof existingOrbit === "object" && existingOrbit !== null) {
+                const existingArgs = existingOrbit.args;
+                const arg0 = Array.isArray(existingArgs) && typeof existingArgs[0] === "string" ? existingArgs[0] : "";
+                const isOrbit =
+                    arg0.includes("mcp-server") ||
+                    arg0.includes(".antigravity-forms") ||
+                    arg0.includes("globalStorage") ||
+                    arg0.includes("antigravity-interactive-form-planner") ||
+                    (typeof existingOrbit.command === "string" && existingOrbit.command.includes("orbit") && arg0.endsWith("index.js"));
+
+                if (!isOrbit) {
+                    return {
+                        success: false,
+                        error: `Existing mcpServers.orbit entry does not appear to belong to Orbit. Setup halted to avoid overwriting third-party configuration.`,
+                    };
+                }
+            }
         }
 
         // Clean up legacy server name only if it was registered for orbit / planner

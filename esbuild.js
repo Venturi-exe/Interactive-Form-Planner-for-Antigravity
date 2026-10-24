@@ -93,6 +93,7 @@ async function buildAll() {
       // 6. Legacy stub bundle
       {
         ...commonNodeConfig,
+        sourcemap: false,
         entryPoints: [path.join(__dirname, 'legacy-stub', 'extension.ts')],
         outfile: path.join(__dirname, 'legacy-stub', 'extension.js'),
         external: ['vscode'],

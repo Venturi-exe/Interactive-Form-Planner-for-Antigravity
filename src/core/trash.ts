@@ -82,17 +82,32 @@ export async function moveToTrash(
 
 /**
  * Restores a file or directory from the trash directory to a destination path.
+ * N-07: Validates that trashedFileName is a plain basename inside the trash directory
+ * and refuses to overwrite an existing destination path.
  */
 export async function restoreFromTrash(
     trashedFileName: string,
     destinationPath: string,
     brainRoot: string = getBrainRoot()
 ): Promise<void> {
+    if (typeof trashedFileName !== "string" || !trashedFileName.trim()) {
+        throw new Error("trashedFileName must be a non-empty string");
+    }
+
+    const cleanBase = path.basename(trashedFileName);
+    if (cleanBase !== trashedFileName || trashedFileName.includes("..") || trashedFileName.includes("/") || trashedFileName.includes("\\")) {
+        throw new Error(`Invalid trashed file name: ${trashedFileName}`);
+    }
+
     const trashDir = path.join(brainRoot, BRAIN_DIRS.TRASH);
-    const sourcePath = path.join(trashDir, trashedFileName);
+    const sourcePath = path.join(trashDir, cleanBase);
 
     if (!fs.existsSync(sourcePath)) {
         throw new Error(`Item not found in trash: ${trashedFileName}`);
+    }
+
+    if (fs.existsSync(destinationPath)) {
+        throw new Error(`Restore failed: destination path already exists: ${destinationPath}`);
     }
 
     const destDir = path.dirname(destinationPath);
@@ -135,10 +150,20 @@ export async function listTrash(
         const fullPath = path.join(trashDir, entry);
         try {
             const stats = await fs.promises.stat(fullPath);
-            const trashedAt = parseTimestampPrefix(entry) || stats.birthtime || stats.mtime;
-            const parts = entry.split("_");
-            // If entry matches <timestamp>_<uuid>_<basename>, originalName starts after uuid
-            const originalName = parts.length > 2 ? parts.slice(2).join("_") : (parts.length > 1 ? parts.slice(1).join("_") : entry);
+            const trashedAt = parseTimestampPrefix(entry) || stats.mtime;
+
+            // N-13: Accurately parse original name from <ts>_<uuid8>_<name> or legacy <ts>_<name>
+            let originalName = entry;
+            const uuidMatch = entry.match(/^\d{8}(?:T\d{6}Z?)?_[a-f0-9]{8}_(.+)$/i);
+            if (uuidMatch) {
+                originalName = uuidMatch[1];
+            } else {
+                const legacyMatch = entry.match(/^\d{8}(?:T\d{6}Z?)?_(.+)$/i);
+                if (legacyMatch) {
+                    originalName = legacyMatch[1];
+                }
+            }
+
             results.push({
                 fileName: entry,
                 filePath: fullPath,
@@ -175,8 +200,8 @@ export async function purgeExpiredTrash(
         const fullPath = path.join(trashDir, entry);
         try {
             const stats = await fs.promises.stat(fullPath);
-            // V-05: Age must be measured from trashedAt timestamp, not mtimeMs
-            const trashedAt = parseTimestampPrefix(entry) || stats.birthtime || stats.mtime;
+            // V-05 / N-13: Age derived from prefix timestamp; fallback to mtime
+            const trashedAt = parseTimestampPrefix(entry) || stats.mtime;
             const ageMs = now - trashedAt.getTime();
             if (ageMs > ttlMs) {
                 if (stats.isDirectory()) {

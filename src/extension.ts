@@ -21,6 +21,7 @@ import { detectHost } from "./core/host.js";
 import { injectOrbitRules, getOrbitRulesTemplate } from "./core/rules.js";
 import { writeAtomic } from "./core/fsx.js";
 import { runUninstall } from "./uninstall.js";
+import * as jsonc from "jsonc-parser";
 
 let mcpBridge: McpBridge | undefined;
 let impactWatcher: ImpactWatcher | undefined;
@@ -51,15 +52,12 @@ export function activate(context: vscode.ExtensionContext): void {
 
     const formViewProvider = new FormViewProvider(context.extensionUri, context, brain);
 
-    // Sync bundled MCP server to stable storage on every activation (V-04)
-    syncMcpServer(context).catch((err) => {
-        console.error("Orbit MCP server sync failed:", err);
-    });
-
-    // Run auto-setup for MCP and GEMINI.md
-    runFirstTimeSetup(context).catch((err) => {
-        console.error("Orbit auto-setup failed:", err);
-    });
+    // Sync bundled MCP server to stable storage and run setup sequentially (N-08)
+    syncMcpServer(context)
+        .then(() => runFirstTimeSetup(context))
+        .catch((err) => {
+            console.error("Orbit MCP server sync / auto-setup failed:", err);
+        });
 
     // Register the webview view provider for the sidebar
     context.subscriptions.push(
@@ -137,7 +135,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
             const demoRequest = {
                 requestId: `demo_${Date.now()}`,
-                title: "Orbit Planner v0.2.6: Full Feature Demo",
+                title: "Orbit Planner: Full Feature Demo",
                 description: "Demonstrates every Orbit Planner feature: single-choice, multi-choice, free-text (short + long), the newly updated dark clarify tick box, and the Execute Plan button.",
                 showExecuteButton: true,
                 fields: [
@@ -318,15 +316,17 @@ The goal is to demonstrate all the features of the Orbit pre-execution planner a
         })
     );
 
-    // Register setup, repair, and cleanup commands (P6-5 / P6-7)
+    // Register setup, repair, and cleanup commands (P6-5 / P6-7 / N-02)
     context.subscriptions.push(
         vscode.commands.registerCommand("orbit.setup", async () => {
+            await context.globalState.update("orbit.integrationRemoved", undefined);
             await runFirstTimeSetup(context, true);
         })
     );
 
     context.subscriptions.push(
         vscode.commands.registerCommand("orbit.repair", async () => {
+            await context.globalState.update("orbit.integrationRemoved", undefined);
             await syncMcpServer(context);
             await runFirstTimeSetup(context, true);
             vscode.window.showInformationMessage("Orbit: Configuration repaired and MCP server refreshed.");
@@ -341,10 +341,23 @@ The goal is to demonstrate all the features of the Orbit pre-execution planner a
                 "Cancel"
             );
             if (confirm === "Remove") {
-                await runUninstall();
-                context.globalState.update("setupVersion", undefined);
-                context.globalState.update("orbit.setupConsented", undefined);
-                vscode.window.showInformationMessage("Orbit: Integration removed from ~/.gemini.");
+                const res = await runUninstall({
+                    appName: vscode.env.appName,
+                    globalStoragePath: context.globalStorageUri.fsPath,
+                });
+                if (res.success) {
+                    await context.globalState.update("setupVersion", undefined);
+                    await context.globalState.update("orbit.setupConsented", undefined);
+                    // N-02: Store persistent flag so auto-setup respects removal until user explicitly runs orbit.setup
+                    await context.globalState.update("orbit.integrationRemoved", true);
+                    if (res.removedServer || res.removedRules) {
+                        vscode.window.showInformationMessage("Orbit: Integration removed from ~/.gemini.");
+                    } else {
+                        vscode.window.showInformationMessage("Orbit: No active Orbit integration found to remove.");
+                    }
+                } else {
+                    vscode.window.showErrorMessage(`Orbit: Failed to remove integration (${res.reason || "unknown error"}).`);
+                }
             }
         })
     );
@@ -419,6 +432,12 @@ export async function runFirstTimeSetup(context: vscode.ExtensionContext, force 
     // Always sync server bundle regardless of setupVersion (V-04)
     const stableServerPath = await syncMcpServer(context);
 
+    // N-02: If user explicitly removed integration, respect choice unless forced (orbit.setup)
+    if (!force && context.globalState.get<boolean>("orbit.integrationRemoved", false)) {
+        console.log("[Orbit Setup] Integration was previously removed by user. Skipping auto-setup.");
+        return;
+    }
+
     if (!force && context.globalState.get("setupVersion") === "9") {
         return;
     }
@@ -435,6 +454,36 @@ export async function runFirstTimeSetup(context: vscode.ExtensionContext, force 
         // V-02 Host Gate: Do not configure host GEMINI.md or mcp_config.json in non-Antigravity editors
         if (!host.isAntigravity) {
             console.log(`[Orbit Setup] Non-Antigravity editor detected (${vscode.env.appName || "unknown"}). Skipping auto-setup.`);
+
+            // Q7 Cleanup: Check for legacy 0.2.6 registration pointing to this host's globalStorage
+            if (!context.globalState.get<boolean>("orbit.q7LegacyChecked", false)) {
+                await context.globalState.update("orbit.q7LegacyChecked", true);
+                if (fs.existsSync(host.mcpConfigPath)) {
+                    try {
+                        const raw = await fs.promises.readFile(host.mcpConfigPath, "utf-8");
+                        const parsed = jsonc.parse(raw);
+                        const orbitEntry = parsed?.mcpServers?.orbit || parsed?.mcpServers?.["antigravity-planner"];
+                        if (orbitEntry && Array.isArray(orbitEntry.args) && typeof orbitEntry.args[0] === "string") {
+                            const arg0 = path.resolve(orbitEntry.args[0]).toLowerCase();
+                            const myStorage = path.resolve(context.globalStorageUri.fsPath).toLowerCase();
+                            if (arg0.startsWith(myStorage)) {
+                                const cleanupChoice = await vscode.window.showInformationMessage(
+                                    "Orbit: Detected obsolete Orbit MCP server registered in ~/.gemini from a previous installation in this editor. Clean it up?",
+                                    "Clean Up",
+                                    "Keep"
+                                );
+                                if (cleanupChoice === "Clean Up") {
+                                    await runUninstall({
+                                        appName: vscode.env.appName,
+                                        globalStoragePath: context.globalStorageUri.fsPath,
+                                    });
+                                    vscode.window.showInformationMessage("Orbit: Legacy server registration cleaned up.");
+                                }
+                            }
+                        }
+                    } catch { /* skip */ }
+                }
+            }
             return;
         }
 

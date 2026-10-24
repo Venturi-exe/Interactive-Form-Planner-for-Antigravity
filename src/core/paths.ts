@@ -12,8 +12,11 @@ function getCanonicalTarget(targetPath: string): string {
   const suffix: string[] = [];
   while (path.dirname(curr) !== curr) {
     let exists = false;
+    let isLink = false;
     try {
-      exists = Boolean(fs.lstatSync(curr));
+      const stat = fs.lstatSync(curr);
+      exists = true;
+      isLink = stat.isSymbolicLink();
     } catch {
       exists = false;
     }
@@ -21,7 +24,12 @@ function getCanonicalTarget(targetPath: string): string {
       try {
         const real = fs.realpathSync(curr);
         return suffix.length > 0 ? path.join(real, ...suffix) : real;
-      } catch {
+      } catch (err) {
+        // N-06: If lstat reports a link and realpath fails, this is a broken link.
+        // Throwing prevents escaping root via broken links.
+        if (isLink) {
+          throw new Error(`Broken symbolic link or junction target cannot be resolved: ${curr}`);
+        }
         return suffix.length > 0 ? path.join(curr, ...suffix) : curr;
       }
     }
@@ -129,10 +137,19 @@ export function normalizeProjectKey(key: string): string {
 
   // Replace invalid characters with underscore, collapse consecutive underscores
   let cleaned = lower.replace(/[^a-z0-9._-]/g, '_').replace(/_+/g, '_');
-  cleaned = cleaned.replace(/^_+|_+$/g, '');
-  if (!cleaned) {
+  // N-05: Strip leading and trailing dots, dashes, and underscores
+  cleaned = cleaned.replace(/^[._-]+|[._-]+$/g, '');
+
+  // N-05: Guard against Windows reserved device names (con, prn, aux, nul, com1-9, lpt1-9)
+  if (WINDOWS_RESERVED.test(cleaned)) {
+    cleaned = `project_${cleaned}`;
+  }
+
+  // N-05: Enforce that the result matches ^[a-z0-9][a-z0-9._-]*$
+  if (!cleaned || !/^[a-z0-9]/.test(cleaned)) {
     return '_default';
   }
+
   return cleaned.slice(0, 128);
 }
 
@@ -196,7 +213,7 @@ const DENY_PATTERNS = [
   /^_failed([\\/].*)?$/i,
   /^\.layout-version$/i,
   /^\.gitignore$/i,
-  /^\.migrated$/i,
+  /^\.migrated([\\/].*)?$/i,
   /^migration-v3\.json$/i,
 ];
 

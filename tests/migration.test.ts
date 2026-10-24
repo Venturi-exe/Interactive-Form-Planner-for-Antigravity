@@ -35,7 +35,7 @@ describe("Layout v3 brain migration and template initialization", () => {
         expect(secondCall).toBe(false);
     });
 
-    it("migrateToLayoutV3 migrates v2 projects to projects/<lowercased>/, maps layout v3 folders, and archives to .migrated/ (V-01, V-14)", async () => {
+    it("migrateToLayoutV3 migrates v2 projects to projects/<lowercased>/, maps layout v3 folders, and archives to .migrated/ (V-01, V-14, N-11)", async () => {
         // Setup mock v2 layout
         const appDir = path.join(mockBrainRoot, "My-Project", "cartograph");
         fs.mkdirSync(appDir, { recursive: true });
@@ -53,14 +53,14 @@ describe("Layout v3 brain migration and template initialization", () => {
         expect(result.migrated).toBe(true);
         expect(result.errors).toEqual([]);
 
-        // V-14: Verify target layout v3 directories (mapped to reports and memories/sessions)
-        const migratedAppReport = path.join(mockBrainRoot, "projects", "my-project", "reports", "report_01.json");
+        // N-11: Verify target layout v3 directories (mapped to canonical cartograph and memories/sessions)
+        const migratedAppReport = path.join(mockBrainRoot, "projects", "my-project", "cartograph", "report_01.json");
         expect(fs.existsSync(migratedAppReport)).toBe(true);
 
         const migratedOrbitSession = path.join(mockBrainRoot, "projects", "orbit", "memories", "sessions", "session_01.md");
         expect(fs.existsSync(migratedOrbitSession)).toBe(true);
 
-        const migratedDefaultReport = path.join(mockBrainRoot, "projects", "_default", "reports", "report_def.json");
+        const migratedDefaultReport = path.join(mockBrainRoot, "projects", "_default", "cartograph", "report_def.json");
         expect(fs.existsSync(migratedDefaultReport)).toBe(true);
 
         // V-01: Verified old top-level folders moved to .migrated/ archive, NOT .trash (never auto-purged)
@@ -82,7 +82,7 @@ describe("Layout v3 brain migration and template initialization", () => {
         expect(rerun.migrated).toBe(false);
     });
 
-    it("isolates errors per folder and normalizes spaces/special chars so bad names do not abort migration (V-06)", async () => {
+    it("isolates errors per folder and normalizes spaces/special chars (V-06, N-05)", async () => {
         // Create a project with spaces and special chars
         const weirdDir = path.join(mockBrainRoot, "My Cool App! (2026)", "cartograph");
         fs.mkdirSync(weirdDir, { recursive: true });
@@ -96,11 +96,70 @@ describe("Layout v3 brain migration and template initialization", () => {
         expect(result.migrated).toBe(true);
 
         // Both should migrate without aborting
-        expect(fs.existsSync(path.join(mockBrainRoot, "projects", "my_cool_app_2026", "reports", "report.json"))).toBe(true);
+        expect(fs.existsSync(path.join(mockBrainRoot, "projects", "my_cool_app_2026", "cartograph", "report.json"))).toBe(true);
         expect(fs.existsSync(path.join(mockBrainRoot, "projects", "goodproject", "memories", "INDEX.md"))).toBe(true);
 
         // Layout version must be written
         const version = fs.readFileSync(path.join(mockBrainRoot, ".layout-version"), "utf-8").trim();
         expect(version).toBe("3");
+    });
+
+    it("preserves collision files with differing content as <name>.<srcdir>.<ext> without overwriting (N-10)", async () => {
+        // Create pre-existing destination file in projects/orbit/cartograph/report.json
+        const destDir = path.join(mockBrainRoot, "projects", "orbit", "cartograph");
+        fs.mkdirSync(destDir, { recursive: true });
+        fs.writeFileSync(path.join(destDir, "report.json"), "version A content", "utf-8");
+
+        // Create legacy folder 'Orbit' with different content in report.json
+        const srcDir = path.join(mockBrainRoot, "Orbit", "cartograph");
+        fs.mkdirSync(srcDir, { recursive: true });
+        fs.writeFileSync(path.join(srcDir, "report.json"), "version B differing content", "utf-8");
+
+        const result = await migrateToLayoutV3(mockBrainRoot);
+        expect(result.migrated).toBe(true);
+
+        // Original destination file must be intact (not overwritten)
+        expect(fs.readFileSync(path.join(destDir, "report.json"), "utf-8")).toBe("version A content");
+
+        // Colliding file must be preserved with source directory suffix
+        const preservedPath = path.join(destDir, "report.Orbit.json");
+        expect(fs.existsSync(preservedPath)).toBe(true);
+        expect(fs.readFileSync(preservedPath, "utf-8")).toBe("version B differing content");
+    });
+
+    it("does not write .layout-version if a folder fails manifest verification (N-04)", async () => {
+        // Setup two projects: one good, one that fails copy
+        const goodDir = path.join(mockBrainRoot, "GoodApp", "cartograph");
+        fs.mkdirSync(goodDir, { recursive: true });
+        fs.writeFileSync(path.join(goodDir, "r1.json"), "good", "utf-8");
+
+        // Spy on fs.promises.readdir or fail a specific folder by putting a file where a directory should be
+        const badDir = path.join(mockBrainRoot, "BadApp", "cartograph");
+        fs.mkdirSync(badDir, { recursive: true });
+        fs.writeFileSync(path.join(badDir, "bad_file.json"), "bad", "utf-8");
+
+        // Pre-create destination projects/badapp/cartograph as a regular file so copy fails!
+        const badDestParent = path.join(mockBrainRoot, "projects", "badapp");
+        fs.mkdirSync(badDestParent, { recursive: true });
+        fs.writeFileSync(path.join(badDestParent, "cartograph"), "blocking file", "utf-8");
+
+        const result = await migrateToLayoutV3(mockBrainRoot);
+
+        expect(result.migrated).toBe(false);
+        expect(result.pendingFolders).toContain("BadApp");
+
+        // .layout-version must NOT be created!
+        expect(fs.existsSync(path.join(mockBrainRoot, ".layout-version"))).toBe(false);
+
+        // GoodApp was verified and archived
+        expect(fs.existsSync(path.join(mockBrainRoot, "GoodApp"))).toBe(false);
+        // BadApp original was left untouched!
+        expect(fs.existsSync(path.join(mockBrainRoot, "BadApp"))).toBe(true);
+
+        // Journal records partial stage
+        const journalPath = path.join(mockBrainRoot, ".journal", "migration-v3.json");
+        const journal = JSON.parse(fs.readFileSync(journalPath, "utf-8"));
+        expect(journal.stage).toBe("partial");
+        expect(journal.pendingFolders).toContain("BadApp");
     });
 });
