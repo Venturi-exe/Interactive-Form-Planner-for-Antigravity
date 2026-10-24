@@ -36,7 +36,7 @@ Orbit persists long-term architectural memory across sessions in `~/.orbit-brain
 - Advisory cross-process locking (`.locks/`) to prevent race conditions during concurrent agent updates.
 
 ### 4. Non-Destructive IDE Integration
-- Marker-bounded rules injection: Orbit injects its agent rules into `GEMINI.md` within explicit HTML comment markers (`<!-- ORBIT_RULES_START -->` and `<!-- ORBIT_RULES_END -->`), preserving all custom user instructions.
+- Marker-bounded rules injection: Orbit injects its agent rules into `GEMINI.md` within explicit versioned HTML comment markers (`<!-- ORBIT_RULES_V1_START -->` and `<!-- ORBIT_RULES_V1_END -->`), preserving all custom user instructions.
 - Stable MCP server runtime: Bundled server is maintained at a stable path inside `globalStorageUri`, keeping tool registrations active across extension updates.
 - Automated clean uninstall: Automatically removes the MCP server registration and Orbit rules markers upon extension uninstallation.
 
@@ -47,7 +47,7 @@ Orbit persists long-term architectural memory across sessions in `~/.orbit-brain
 ### Primary Method: Open VSX (Recommended)
 This extension is published to Open VSX and is integrated into Antigravity:
 1. Open the **Extensions** sidebar in Antigravity (`Ctrl+Shift+X`).
-2. Search for `Orbit` or `VNTRCORP.antigravity-interactive-form-planner-planning-tool`.
+2. Search for `Orbit` or `VNTRCORP.orbit`.
 3. Click **Install**.
 
 The extension automatically configures your agent rules and MCP server on first launch.
@@ -100,11 +100,13 @@ To make my Orbit-Brain completely customized for my actual projects, workflows, 
      - `skills_reference.md`: Mapping specialized framework prefixes, skill rules, or custom instructions.
 
 5. Generate Project-Specific Knowledge Layers
-   - For each project directory registered in the brain (under `projects/`), establish the long-term memory structures:
+   - For each project directory registered in the brain (under `projects/<project_key>/`), establish the Layout v3 memory structures:
      - `memories/INDEX.md`: A mapped catalog linking concepts, tags, and past session summaries to specific memory observation files.
-     - `memories/facts/`: Immutable truths about the project architecture, design system files, configurations, and user profile information.
      - `memories/PROTOCOL.md`: The rule system dictating how observations must be captured and logged in the session directory.
-     - `memories/sessions/`: A timestamped folder. Populate this folder with generated historical session summaries synthesized from your scan of past conversation logs.
+     - `memories/sessions/`: Timestamped observation logs and historical session summaries.
+     - `memories/features/` and `memories/tasks/`: Granular feature and task context.
+     - `cartograph/`: Canonical repository impact and architecture reports.
+     - `archive/`: Historical context and deprecated notes.
 
 6. Verification and Final Report
    - Run verification checks to ensure all directories and files are successfully generated.
