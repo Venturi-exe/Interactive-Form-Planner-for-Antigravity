@@ -101,12 +101,15 @@ export async function acquireLock(
                 // Check if existing lock is stale (M-02, M-03)
                 try {
                     let isStale = false;
+                    let staleToken: string | undefined;
+                    let staleMtime: number | undefined;
                     try {
                         const content = await fs.promises.readFile(lockPath, "utf-8");
                         const meta = JSON.parse(content) as LockMetadata;
                         const lastActive = meta.ts || meta.acquiredAt || 0;
                         if (Date.now() - lastActive > staleMs) {
                             isStale = true;
+                            staleToken = meta.token;
                         }
                     } catch {
                         // M-02: Corrupted or empty (0-byte) lock file. Fall back to mtimeMs staleness check
@@ -114,6 +117,7 @@ export async function acquireLock(
                             const stat = await fs.promises.stat(lockPath);
                             if (Date.now() - stat.mtimeMs > staleMs) {
                                 isStale = true;
+                                staleMtime = stat.mtimeMs;
                             }
                         } catch {
                             // File disappeared in the interim
@@ -126,9 +130,25 @@ export async function acquireLock(
                         const stealPath = `${lockPath}.steal.${crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
                         try {
                             await fs.promises.rename(lockPath, stealPath);
+                            // Confirm that the renamed file still holds the stale token or mtime before deleting (M-03)
                             try {
-                                await fs.promises.unlink(stealPath);
-                            } catch { /* already unlinked */ }
+                                if (staleToken) {
+                                    const renamedContent = await fs.promises.readFile(stealPath, "utf-8");
+                                    const renamedMeta = JSON.parse(renamedContent) as LockMetadata;
+                                    if (renamedMeta.token === staleToken) {
+                                        await fs.promises.unlink(stealPath);
+                                    }
+                                } else if (staleMtime) {
+                                    const renamedStat = await fs.promises.stat(stealPath);
+                                    if (renamedStat.mtimeMs === staleMtime || Date.now() - renamedStat.mtimeMs > staleMs) {
+                                        await fs.promises.unlink(stealPath);
+                                    }
+                                } else {
+                                    await fs.promises.unlink(stealPath);
+                                }
+                            } catch {
+                                try { await fs.promises.unlink(stealPath); } catch { /* ignore */ }
+                            }
                             continue;
                         } catch {
                             // Another process won the rename or lock was unlinked

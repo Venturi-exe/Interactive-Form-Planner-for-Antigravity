@@ -7,7 +7,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import * as jsonc from "jsonc-parser";
-import { detectHost } from "./core/host.js";
+import { detectHost, getStorageOwner } from "./core/host.js";
 import { isSubpath } from "./core/paths.js";
 import { removeOrbitRules } from "./core/rules.js";
 import { writeAtomic, createRollingBackup } from "./core/fsx.js";
@@ -62,7 +62,7 @@ export function isOrbitServerEntry(
     }
 
     // Check if target points to legacy ~/.antigravity-forms (only if host is Antigravity or unspecified)
-    if (hostIsAntigravity !== false && isSubpath(arg0, legacyFormsPath)) {
+    if (hostIsAntigravity === true && isSubpath(arg0, legacyFormsPath)) {
         return true;
     }
 
@@ -74,21 +74,13 @@ export function isOrbitServerEntry(
             (lowerArg0.includes("orbit") || lowerArg0.includes("antigravity-interactive-form-planner") || lowerArg0.includes("vntrcorp"));
 
         if (isMcpBundle) {
-            const isAntigravityStorage = lowerArg0.includes("antigravity");
-            // If caller is stock VS Code (hostIsAntigravity === false), NEVER match an Antigravity storage entry
+            const storageOwner = getStorageOwner(arg0);
             if (hostIsAntigravity === false) {
-                if (isAntigravityStorage) {
-                    return false;
-                }
-                // Only match if it points to stock VS Code storage
-                if (lowerArg0.includes("globalstorage") && (lowerArg0.includes("code") || lowerArg0.includes(".vscode"))) {
-                    return true;
-                }
+                // Caller is stock VS Code: only match if storage explicitly belongs to VS Code
+                return storageOwner === "vscode";
             } else if (hostIsAntigravity === true) {
-                // If caller is Antigravity, match Antigravity storage
-                if (lowerArg0.includes("globalstorage") && isAntigravityStorage) {
-                    return true;
-                }
+                // Caller is Antigravity: only match if storage explicitly belongs to Antigravity
+                return storageOwner === "antigravity";
             }
         }
     }
@@ -111,22 +103,8 @@ export async function runUninstall(options?: UninstallOptions): Promise<Uninstal
         const geminiMdPath = options?.geminiMdPath || host.geminiMdPath;
         const globalStoragePath = options?.globalStoragePath;
 
-        // 1. Remove Orbit rules block from GEMINI.md
-        // Only remove if host is Antigravity (M-01: stock VS Code must NEVER remove GEMINI.md rules)
-        const shouldCleanRules = host.isAntigravity;
-        if (shouldCleanRules && fs.existsSync(geminiMdPath)) {
-            try {
-                const removed = await removeOrbitRules(geminiMdPath);
-                if (removed) {
-                    result.removedRules = true;
-                    console.log("[Orbit Uninstall] Removed Orbit marker rules from GEMINI.md");
-                }
-            } catch (err) {
-                console.error("[Orbit Uninstall] Failed to clean GEMINI.md:", err);
-            }
-        }
-
-        // 2. Remove orbit MCP server registration from mcp_config.json
+        // 1. Remove orbit MCP server registration from mcp_config.json FIRST
+        // If mcp_config.json has parse errors, abort immediately before modifying GEMINI.md
         if (fs.existsSync(mcpConfigPath)) {
             try {
                 const raw = fs.readFileSync(mcpConfigPath, "utf-8");
@@ -170,6 +148,22 @@ export async function runUninstall(options?: UninstallOptions): Promise<Uninstal
                 console.error("[Orbit Uninstall] Failed to clean mcp_config.json:", err);
                 result.reason = (err as Error).message;
                 return result;
+            }
+        }
+
+        // 2. Remove Orbit rules block from GEMINI.md
+        // Only remove if host is Antigravity (M-01: stock VS Code must NEVER remove GEMINI.md rules)
+        // Cleaned after mcp_config.json so parse errors in mcp_config.json do not leave GEMINI.md half-uninstalled
+        const shouldCleanRules = host.isAntigravity;
+        if (shouldCleanRules && fs.existsSync(geminiMdPath)) {
+            try {
+                const removed = await removeOrbitRules(geminiMdPath);
+                if (removed) {
+                    result.removedRules = true;
+                    console.log("[Orbit Uninstall] Removed Orbit marker rules from GEMINI.md");
+                }
+            } catch (err) {
+                console.error("[Orbit Uninstall] Failed to clean GEMINI.md:", err);
             }
         }
 
