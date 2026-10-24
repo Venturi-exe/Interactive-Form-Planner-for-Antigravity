@@ -11,6 +11,7 @@ import * as path from "path";
 import * as os from "os";
 import * as fs from "fs";
 import type { AlignmentFormRequest, FormResult } from "./types.js";
+import { FormWebviewMessageSchema } from "./core/schemas.js";
 import { OrbitBrain } from "./OrbitBrain.js";
 import { HubPanelManager } from "./HubPanelManager.js";
 
@@ -98,7 +99,14 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
     /**
      * Unified handler for bidirectional messages from any active webview (sidebar or panel).
      */
-    private async _handleWebviewMessage(message: any, sourcePanel?: vscode.WebviewPanel): Promise<void> {
+    private async _handleWebviewMessage(rawMessage: unknown, sourcePanel?: vscode.WebviewPanel): Promise<void> {
+        const parsed = FormWebviewMessageSchema.safeParse(rawMessage);
+        if (!parsed.success) {
+            console.warn("[FormViewProvider] Ignored invalid webview message:", parsed.error);
+            return;
+        }
+        const message = parsed.data;
+
         if (message.type === "webview_ready") {
             const targetWebview = sourcePanel ? sourcePanel.webview : this._view?.webview;
             targetWebview?.postMessage({
@@ -192,14 +200,14 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
         }
 
         if (message.type === "open_receipt") {
-            const projectName = message.projectName;
+            const projectName = message.projectName || "Default";
             const taskId = message.taskId;
             this._openPlanningReceipt(projectName, taskId);
             return;
         }
 
         if (message.type === "open_walkthrough") {
-            const projectName = message.projectName;
+            const projectName = message.projectName || "Default";
             const taskId = message.taskId;
             this._openTaskWalkthrough(projectName, taskId);
             return;

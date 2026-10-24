@@ -3,6 +3,8 @@ import {
     ImpactReportSchema,
     PlannerRequestSchema,
     PlannerResponseSchema,
+    FormWebviewMessageSchema,
+    HubWebviewMessageSchema,
 } from "../src/core/schemas.js";
 
 describe("schemas validation", () => {
@@ -81,12 +83,25 @@ describe("schemas validation", () => {
         expect(parsed.data.framework).toBe("React");
     });
 
-    it("PlannerResponseSchema rejects invalid action", () => {
-        const invalidResponse = {
-            requestId: "req-1",
-            action: "unknown_action",
-        };
+    it("FormWebviewMessageSchema validates valid messages and rejects invalid ones", () => {
+        const validMsg = { type: "form_submitted", action: "submit", data: { answer: "yes" } };
+        const parsed = FormWebviewMessageSchema.parse(validMsg);
+        expect(parsed.type).toBe("form_submitted");
 
-        expect(() => PlannerResponseSchema.parse(invalidResponse)).toThrow();
+        const invalidMsg = { type: "unknown_webview_event" };
+        expect(() => FormWebviewMessageSchema.parse(invalidMsg)).toThrow();
+    });
+
+    it("HubWebviewMessageSchema validates valid messages and rejects invalid ones", () => {
+        const validMsg = {
+            type: "hub_delete_reports",
+            projectName: "orbit",
+            filenames: ["rep_001.json"],
+        };
+        const parsed = HubWebviewMessageSchema.parse(validMsg);
+        expect(parsed.type).toBe("hub_delete_reports");
+
+        const invalidMsg = { type: "hub_delete_reports", projectName: 123 };
+        expect(() => HubWebviewMessageSchema.parse(invalidMsg)).toThrow();
     });
 });

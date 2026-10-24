@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { OrbitBrain } from './OrbitBrain';
 import { ImpactReport, MergedTimelineEntry, ImpactChange } from './types';
+import { HubWebviewMessageSchema } from './core/schemas.js';
 
 function getNonce() {
   let text = '';
@@ -135,8 +136,15 @@ export class HubPanelManager {
   /**
    * Main Message Dispatcher Router.
    */
-  private static async _handleHubMessage(message: any): Promise<void> {
+  private static async _handleHubMessage(rawMessage: unknown): Promise<void> {
     if (!this._brain || !this._context) return;
+
+    const parsed = HubWebviewMessageSchema.safeParse(rawMessage);
+    if (!parsed.success) {
+      console.warn('[HubPanelManager] Ignored invalid hub webview message:', parsed.error);
+      return;
+    }
+    const message = parsed.data;
 
     switch (message.type) {
       case 'hub_ready':
@@ -391,12 +399,12 @@ export class HubPanelManager {
                    style-src ${webview.cspSource} 'unsafe-inline';
                    img-src ${webview.cspSource} data:;
                    script-src 'nonce-${nonce}';">
-    <link rel="stylesheet" href="${cssUri}?v=0.2.6">
+    <link rel="stylesheet" href="${cssUri}">
     <title>Cartograph Hub</title>
 </head>
 <body>
     <div id="hub-root"></div>
-    <script nonce="${nonce}" src="${jsUri}?v=0.2.6"></script>
+    <script nonce="${nonce}" src="${jsUri}"></script>
 </body>
 </html>`;
   }

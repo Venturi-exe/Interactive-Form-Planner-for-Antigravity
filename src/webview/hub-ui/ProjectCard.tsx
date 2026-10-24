@@ -71,6 +71,17 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
   const cardLabel = projectName === 'default' ? 'Default Project' : 
     projectName.split('/').map(part => part.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())).join(' > ');
 
+  const [page, setPage] = React.useState(1);
+  const PAGE_SIZE = 50;
+
+  React.useEffect(() => {
+    setPage(1);
+  }, [filteredReports.length]);
+
+  const paginatedReports = React.useMemo(() => {
+    return filteredReports.slice(0, page * PAGE_SIZE);
+  }, [filteredReports, page]);
+
   return (
     <div className={`bento-card ${isExpanded ? 'expanded' : ''} ${compareMode ? 'compare-active' : ''}`}>
       <div className="bento-card-header" onClick={onToggle}>
@@ -136,7 +147,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
             </div>
           ) : (
             <div className="reports-table">
-              {filteredReports.map((report) => {
+              {paginatedReports.map((report) => {
                 const repKey = report.filename || report.taskId;
                 return (
                   <ReportRow
@@ -155,6 +166,25 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
                   />
                 );
               })}
+              {filteredReports.length > paginatedReports.length && (
+                <div className="pagination-bar" style={{ padding: "8px 12px", textAlign: "center" }}>
+                  <button
+                    className="btn-show-more"
+                    style={{
+                      background: "var(--vscode-button-secondaryBackground, #3a3d41)",
+                      color: "var(--vscode-button-secondaryForeground, #ffffff)",
+                      border: "none",
+                      borderRadius: "4px",
+                      padding: "6px 14px",
+                      cursor: "pointer",
+                      fontSize: "12px",
+                    }}
+                    onClick={() => setPage((p) => p + 1)}
+                  >
+                    Show More ({filteredReports.length - paginatedReports.length} remaining)
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>

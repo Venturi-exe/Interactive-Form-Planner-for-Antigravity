@@ -94,3 +94,80 @@ export const PlannerResponseSchema = z.object({
     clarificationRequest: z.string().optional(),
 });
 export type PlannerResponse = z.infer<typeof PlannerResponseSchema>;
+
+// Form Webview Incoming Message Schema
+export const FormWebviewMessageSchema = z.discriminatedUnion("type", [
+    z.object({ type: z.literal("webview_ready") }),
+    z.object({ type: z.literal("restore_sidebar") }),
+    z.object({ type: z.literal("open_hub") }),
+    z.object({ type: z.literal("tab_changed"), tab: z.string().optional() }),
+    z.object({ type: z.literal("close_report"), taskId: z.string() }),
+    z.object({
+        type: z.literal("delete_report"),
+        taskId: z.string(),
+        sessionId: z.string().optional(),
+        projectName: z.string().optional(),
+    }),
+    z.object({ type: z.literal("interaction_reset") }),
+    z.object({ type: z.literal("open_file"), filePath: z.string(), projectName: z.string().optional() }),
+    z.object({ type: z.literal("open_receipt"), projectName: z.string().optional(), taskId: z.string() }),
+    z.object({ type: z.literal("open_walkthrough"), projectName: z.string().optional(), taskId: z.string() }),
+    z.object({ type: z.literal("form_timeout") }),
+    z.object({ type: z.literal("form_clarification"), question: z.string().optional() }),
+    z.object({
+        type: z.literal("form_submitted"),
+        action: z.enum(["submit", "execute", "clarification", "timeout", "dismiss"]).optional(),
+        data: z.record(z.any()).optional().default({}),
+        clarificationRequest: z.string().optional(),
+    }),
+    z.object({
+        type: z.literal("form_executed"),
+        data: z.record(z.any()).optional().default({}),
+    }),
+    z.object({ type: z.literal("form_dismissed") }),
+]);
+export type FormWebviewMessage = z.infer<typeof FormWebviewMessageSchema>;
+
+// Hub Webview Incoming Message Schema
+export const HubWebviewMessageSchema = z.discriminatedUnion("type", [
+    z.object({ type: z.literal("hub_ready") }),
+    z.object({
+        type: z.literal("hub_delete_reports"),
+        projectName: z.string(),
+        filenames: z.array(z.string()),
+    }),
+    z.object({
+        type: z.literal("hub_move_reports"),
+        targetProject: z.string(),
+        reports: z.array(z.object({ filename: z.string(), sourceProject: z.string() })).optional(),
+        sourceProject: z.string().optional(),
+        filenames: z.array(z.string()).optional(),
+    }),
+    z.object({
+        type: z.literal("hub_merge_selected_reports"),
+        projectName: z.string(),
+        taskIds: z.array(z.string()),
+    }),
+    z.object({
+        type: z.literal("hub_update_tags"),
+        projectName: z.string(),
+        taskId: z.string().optional(),
+        filename: z.string().optional(),
+        tags: z.array(z.string()),
+        registryUpdate: z.record(z.any()),
+    }),
+    z.object({
+        type: z.literal("hub_export_all_projects"),
+    }),
+    z.object({
+        type: z.literal("hub_export_project"),
+        projectName: z.string(),
+        format: z.string().optional(),
+    }),
+    z.object({
+        type: z.literal("hub_open_in_cartograph"),
+        taskId: z.string(),
+        projectName: z.string(),
+    }),
+]);
+export type HubWebviewMessage = z.infer<typeof HubWebviewMessageSchema>;
