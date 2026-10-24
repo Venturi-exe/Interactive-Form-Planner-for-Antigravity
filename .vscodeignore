@@ -1,5 +1,7 @@
 **
-!out/**
+!out/extension.js
+!out/mcp-server/index.js
+!out/uninstall.js
 !src/webview/cartograph.js
 !src/webview/cartograph.css
 !src/webview/hub.js

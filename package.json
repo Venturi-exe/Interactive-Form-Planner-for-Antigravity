@@ -2,7 +2,7 @@
   "name": "antigravity-interactive-form-planner-planning-tool",
   "displayName": "Orbit",
   "description": "Orbit : Ultimate planning tool for antigravity.",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "publisher": "VNTRCORP",
   "license": "SEE LICENSE IN LICENSE.txt",
   "engines": {

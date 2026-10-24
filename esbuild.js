@@ -1,5 +1,6 @@
 const esbuild = require('esbuild');
 const path = require('path');
+const fs = require('fs');
 const pkg = require('./package.json');
 
 const isProduction = process.argv.includes('--production');
@@ -22,6 +23,13 @@ const commonNodeConfig = {
 async function buildAll() {
   try {
     console.log(`[esbuild] Building Orbit (${isProduction ? 'PRODUCTION' : 'DEVELOPMENT'})...`);
+
+    if (isProduction) {
+      const outDir = path.join(__dirname, 'out');
+      if (fs.existsSync(outDir)) {
+        fs.rmSync(outDir, { recursive: true, force: true });
+      }
+    }
 
     // 1. Extension bundle
     console.log('[esbuild] Bundling extension...');
