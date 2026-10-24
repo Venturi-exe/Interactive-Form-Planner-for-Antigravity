@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import * as crypto from "crypto";
 import { getBrainRoot, BRAIN_DIRS, LIMITS } from "./constants.js";
 import { ensureDirSafe } from "./fsx.js";
 
@@ -9,6 +10,7 @@ export interface TrashedFileInfo {
     originalName: string;
     trashedAt: Date;
     size: number;
+    isDirectory?: boolean;
 }
 
 /**
@@ -19,15 +21,33 @@ function formatTimestamp(date: Date): string {
 }
 
 /**
- * Moves a file safely into the brain's .trash/ directory instead of deleting it permanently.
- * Prefixes the file with a timestamp to prevent collisions.
+ * Extracts and parses the ISO timestamp prefix from a trashed filename.
+ * Supports both full ISO YYYYMMDDTHHmmssZ and legacy date-only YYYYMMDD prefixes.
+ */
+export function parseTimestampPrefix(name: string): Date | null {
+    const matchFull = name.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z/);
+    if (matchFull) {
+        const [, y, m, d, h, min, s] = matchFull;
+        return new Date(Date.UTC(+y, +m - 1, +d, +h, +min, +s));
+    }
+    const matchDateOnly = name.match(/^(\d{4})(\d{2})(\d{2})/);
+    if (matchDateOnly) {
+        const [, y, m, d] = matchDateOnly;
+        return new Date(Date.UTC(+y, +m - 1, +d));
+    }
+    return null;
+}
+
+/**
+ * Moves a file or directory safely into the brain's .trash/ directory instead of deleting it permanently.
+ * Prefixes the file with a timestamp and unique collision suffix to prevent collisions (V-05).
  */
 export async function moveToTrash(
     filePath: string,
     brainRoot: string = getBrainRoot()
 ): Promise<string> {
     if (!fs.existsSync(filePath)) {
-        throw new Error(`Cannot move non-existent file to trash: ${filePath}`);
+        throw new Error(`Cannot move non-existent path to trash: ${filePath}`);
     }
 
     const trashDir = path.join(brainRoot, BRAIN_DIRS.TRASH);
@@ -35,22 +55,33 @@ export async function moveToTrash(
 
     const baseName = path.basename(filePath);
     const timePrefix = formatTimestamp(new Date());
-    const trashedFileName = `${timePrefix}_${baseName}`;
+    const collisionSuffix = crypto.randomUUID().slice(0, 8);
+    const trashedFileName = `${timePrefix}_${collisionSuffix}_${baseName}`;
     const destinationPath = path.join(trashDir, trashedFileName);
+
+    let stat: fs.Stats | undefined;
+    try {
+        stat = await fs.promises.stat(filePath);
+    } catch { /* proceed */ }
 
     try {
         await fs.promises.rename(filePath, destinationPath);
     } catch {
-        // Fallback for cross-device or permission boundary: copy and unlink
-        await fs.promises.copyFile(filePath, destinationPath);
-        await fs.promises.unlink(filePath);
+        // Fallback for cross-device or permission boundary
+        if (stat?.isDirectory()) {
+            await fs.promises.cp(filePath, destinationPath, { recursive: true });
+            await fs.promises.rm(filePath, { recursive: true, force: true });
+        } else {
+            await fs.promises.copyFile(filePath, destinationPath);
+            await fs.promises.unlink(filePath);
+        }
     }
 
     return destinationPath;
 }
 
 /**
- * Restores a file from the trash directory to a destination path.
+ * Restores a file or directory from the trash directory to a destination path.
  */
 export async function restoreFromTrash(
     trashedFileName: string,
@@ -61,22 +92,33 @@ export async function restoreFromTrash(
     const sourcePath = path.join(trashDir, trashedFileName);
 
     if (!fs.existsSync(sourcePath)) {
-        throw new Error(`File not found in trash: ${trashedFileName}`);
+        throw new Error(`Item not found in trash: ${trashedFileName}`);
     }
 
     const destDir = path.dirname(destinationPath);
     await ensureDirSafe(destDir);
 
+    let stat: fs.Stats | undefined;
+    try {
+        stat = await fs.promises.stat(sourcePath);
+    } catch { /* proceed */ }
+
     try {
         await fs.promises.rename(sourcePath, destinationPath);
     } catch {
-        await fs.promises.copyFile(sourcePath, destinationPath);
-        await fs.promises.unlink(sourcePath);
+        if (stat?.isDirectory()) {
+            await fs.promises.cp(sourcePath, destinationPath, { recursive: true });
+            await fs.promises.rm(sourcePath, { recursive: true, force: true });
+        } else {
+            await fs.promises.copyFile(sourcePath, destinationPath);
+            await fs.promises.unlink(sourcePath);
+        }
     }
 }
 
 /**
- * Lists all files currently stored in the .trash directory.
+ * Lists all files and directories currently stored in the .trash directory.
+ * Trashed timestamp is parsed directly from filename prefix (V-05).
  */
 export async function listTrash(
     brainRoot: string = getBrainRoot()
@@ -93,17 +135,18 @@ export async function listTrash(
         const fullPath = path.join(trashDir, entry);
         try {
             const stats = await fs.promises.stat(fullPath);
-            if (stats.isFile()) {
-                const parts = entry.split("_");
-                const originalName = parts.length > 1 ? parts.slice(1).join("_") : entry;
-                results.push({
-                    fileName: entry,
-                    filePath: fullPath,
-                    originalName,
-                    trashedAt: stats.mtime,
-                    size: stats.size,
-                });
-            }
+            const trashedAt = parseTimestampPrefix(entry) || stats.birthtime || stats.mtime;
+            const parts = entry.split("_");
+            // If entry matches <timestamp>_<uuid>_<basename>, originalName starts after uuid
+            const originalName = parts.length > 2 ? parts.slice(2).join("_") : (parts.length > 1 ? parts.slice(1).join("_") : entry);
+            results.push({
+                fileName: entry,
+                filePath: fullPath,
+                originalName,
+                trashedAt,
+                size: stats.size,
+                isDirectory: stats.isDirectory(),
+            });
         } catch { /* ignore vanished files */ }
     }
 
@@ -111,8 +154,9 @@ export async function listTrash(
 }
 
 /**
- * Purges files from the trash that have exceeded the TTL (default 14 days).
- * Returns the count of purged files.
+ * Purges files and directories from the trash that have exceeded the TTL (default 14 days).
+ * Derives age from filename timestamp rather than mtime to avoid premature deletion of renamed files (V-05).
+ * Returns the count of purged items.
  */
 export async function purgeExpiredTrash(
     ttlMs: number = LIMITS.TRASH_TTL_MS,
@@ -131,9 +175,15 @@ export async function purgeExpiredTrash(
         const fullPath = path.join(trashDir, entry);
         try {
             const stats = await fs.promises.stat(fullPath);
-            const ageMs = now - stats.mtimeMs;
+            // V-05: Age must be measured from trashedAt timestamp, not mtimeMs
+            const trashedAt = parseTimestampPrefix(entry) || stats.birthtime || stats.mtime;
+            const ageMs = now - trashedAt.getTime();
             if (ageMs > ttlMs) {
-                await fs.promises.unlink(fullPath);
+                if (stats.isDirectory()) {
+                    await fs.promises.rm(fullPath, { recursive: true, force: true });
+                } else {
+                    await fs.promises.unlink(fullPath);
+                }
                 purgedCount++;
             }
         } catch { /* ignore */ }

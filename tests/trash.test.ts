@@ -59,24 +59,47 @@ describe("trash operations", () => {
         expect(fs.existsSync(trashedPath)).toBe(false);
     });
 
-    it("purgeExpiredTrash removes files older than TTL", async () => {
+    it("purgeExpiredTrash measures age from timestamp prefix rather than file mtime (V-05)", async () => {
         const trashDir = path.join(mockBrainRoot, ".trash");
         fs.mkdirSync(trashDir, { recursive: true });
 
-        const oldFile = path.join(trashDir, "20200101_ancient.txt");
-        const freshFile = path.join(trashDir, "20261024_fresh.txt");
+        // File trashed today, but with old modification time (edited 30 days ago)
+        const recentlyTrashedOldFile = path.join(trashDir, "20261024T120000Z_uuid1_old_edit.txt");
+        fs.writeFileSync(recentlyTrashedOldFile, "edited long ago", "utf-8");
+        const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+        fs.utimesSync(recentlyTrashedOldFile, thirtyDaysAgo, thirtyDaysAgo);
 
-        fs.writeFileSync(oldFile, "old", "utf-8");
-        fs.writeFileSync(freshFile, "fresh", "utf-8");
-
-        // Manually adjust oldFile's mtime to 30 days in the past
-        const pastTime = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-        fs.utimesSync(oldFile, pastTime, pastTime);
+        // File trashed 30 days ago, with fresh modification time (e.g. touched during restore attempt)
+        const ancientTrash = path.join(trashDir, "20200101T000000Z_uuid2_ancient.txt");
+        fs.writeFileSync(ancientTrash, "ancient", "utf-8");
+        fs.utimesSync(ancientTrash, new Date(), new Date());
 
         const purged = await purgeExpiredTrash(14 * 24 * 60 * 60 * 1000, mockBrainRoot);
         expect(purged).toBe(1);
 
-        expect(fs.existsSync(oldFile)).toBe(false);
-        expect(fs.existsSync(freshFile)).toBe(true);
+        // Ancient trash must be purged, while recently trashed file MUST be preserved!
+        expect(fs.existsSync(ancientTrash)).toBe(false);
+        expect(fs.existsSync(recentlyTrashedOldFile)).toBe(true);
+    });
+
+    it("supports trashing, listing, and restoring whole directories (V-05)", async () => {
+        const testSubdir = path.join(mockBrainRoot, "project_folder");
+        fs.mkdirSync(testSubdir, { recursive: true });
+        fs.writeFileSync(path.join(testSubdir, "subfile.txt"), "sub content", "utf-8");
+
+        const trashedPath = await moveToTrash(testSubdir, mockBrainRoot);
+        expect(fs.existsSync(testSubdir)).toBe(false);
+        expect(fs.existsSync(trashedPath)).toBe(true);
+
+        const list = await listTrash(mockBrainRoot);
+        const folderEntry = list.find((item) => item.originalName === "project_folder");
+        expect(folderEntry).toBeDefined();
+        expect(folderEntry?.isDirectory).toBe(true);
+
+        // Restore directory
+        const restoredDir = path.join(mockBrainRoot, "restored_folder");
+        await restoreFromTrash(path.basename(trashedPath), restoredDir, mockBrainRoot);
+        expect(fs.existsSync(restoredDir)).toBe(true);
+        expect(fs.readFileSync(path.join(restoredDir, "subfile.txt"), "utf-8")).toBe("sub content");
     });
 });

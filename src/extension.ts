@@ -28,12 +28,17 @@ let impactWatcher: ImpactWatcher | undefined;
  */
 export function activate(context: vscode.ExtensionContext): void {
     const brain = new OrbitBrain();
-    brain.initialize();
-    brain.syncWorkspaceProjects();
-    brain.migrateFromLegacy();
+    brain.initialize().then(() => {
+        brain.syncWorkspaceProjects();
+    }).catch((err) => {
+        console.error("Orbit brain initialization failed:", err);
+    });
 
-    // Clear legacy quota state once (P0-4)
-    context.globalState.update("orbit.quotaHistory_v2", undefined);
+    // Clear legacy quota state once (P0-4 / V-17)
+    if (!context.globalState.get("orbit.quotaCleared_v3")) {
+        context.globalState.update("orbit.quotaHistory_v2", undefined);
+        context.globalState.update("orbit.quotaCleared_v3", true);
+    }
 
     context.subscriptions.push(
         vscode.workspace.onDidChangeWorkspaceFolders(() => {

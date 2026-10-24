@@ -5,8 +5,9 @@ import * as fs from "fs";
 import { ImpactReport } from "./types.js";
 import { initBrainFromTemplate, migrateToLayoutV3 } from "./core/migration.js";
 import { moveToTrash } from "./core/trash.js";
-import { writeJsonAtomic, ensureDirSafe } from "./core/fsx.js";
-import { resolveInside, assertSafeFileName } from "./core/paths.js";
+import { writeJsonAtomic, writeAtomic, ensureDirSafe } from "./core/fsx.js";
+import { resolveInside, assertSafeFileName, normalizeProjectKey } from "./core/paths.js";
+import { withLock } from "./core/lock.js";
 
 export class OrbitBrain {
   private readonly brainRoot: string;
@@ -15,24 +16,28 @@ export class OrbitBrain {
     this.brainRoot = process.env.ORBIT_BRAIN_DIR || path.join(os.homedir(), ".orbit-brain");
   }
 
-  /** Ensures the root brain directory and global files exist. Called on extension activation. */
-  public initialize(): void {
-    if (!fs.existsSync(this.brainRoot)) {
-      fs.mkdirSync(this.brainRoot, { recursive: true });
-    }
+  /** Ensures the root brain directory and global files exist. Executes migrations sequentially under brain lock. */
+  public async initialize(): Promise<void> {
+    await ensureDirSafe(this.brainRoot);
 
-    // Initialize from template if empty, then run non-destructive layout v3 migration
-    const templateDir = path.join(__dirname, "..", "media", "brain-template");
-    initBrainFromTemplate(templateDir, this.brainRoot).catch((err) => {
-      console.error("Failed to initialize brain from template:", err);
-    });
-    migrateToLayoutV3(this.brainRoot).catch((err) => {
-      console.error("Failed to migrate brain to layout v3:", err);
-    });
+    try {
+      await withLock(
+        "brain-init",
+        async () => {
+          // 1. Fresh install: init template before any summary files are created
+          const templateDir = path.join(__dirname, "..", "media", "brain-template");
+          await initBrainFromTemplate(templateDir, this.brainRoot);
 
-    const brainArchPath = path.join(this.brainRoot, "BRAIN_ARCHITECTURE.md");
-    if (!fs.existsSync(brainArchPath)) {
-      const archContent = `<!--
+          // 2. Migrate legacy reports from ~/.antigravity-forms
+          await this.migrateFromLegacy();
+
+          // 3. Migrate brain to Layout v3
+          await migrateToLayoutV3(this.brainRoot);
+
+          // 4. Create or update summary files atomically
+          const brainArchPath = path.join(this.brainRoot, "BRAIN_ARCHITECTURE.md");
+          if (!fs.existsSync(brainArchPath)) {
+            const archContent = `<!--
 [ORBIT MEMORY SYSTEM]
 This file documents the structure of the Orbit Memory System (Layout v3).
 The agent uses this to navigate project context, architectural decisions, and persistent memory.
@@ -51,15 +56,15 @@ COHERENCE & MAINTENANCE PROTOCOL (Use when running "update memory system"):
 
 [Auto-updated by the agent during "update memory system"]
 `;
-      fs.writeFileSync(brainArchPath, archContent, "utf-8");
-    }
+            await writeAtomic(brainArchPath, archContent);
+          }
 
-    const globalContextPath = path.join(this.brainRoot, "global_context_summary.md");
-    if (!fs.existsSync(globalContextPath)) {
-      const platformStr = os.platform();
-      const releaseStr = os.release();
-      const shellStr = process.env.SHELL || (os.platform() === "win32" ? "powershell.exe" : "bash");
-      const globalContent = `<!--
+          const globalContextPath = path.join(this.brainRoot, "global_context_summary.md");
+          if (!fs.existsSync(globalContextPath)) {
+            const platformStr = os.platform();
+            const releaseStr = os.release();
+            const shellStr = process.env.SHELL || (os.platform() === "win32" ? "powershell.exe" : "bash");
+            const globalContent = `<!--
 [ORBIT MEMORY SYSTEM]
 Global environment and tooling context. Updated automatically by the agent.
 -->
@@ -76,7 +81,13 @@ Global environment and tooling context. Updated automatically by the agent.
 ## Notes
 [Agent-populated during "update memory system"]
 `;
-      fs.writeFileSync(globalContextPath, globalContent, "utf-8");
+            await writeAtomic(globalContextPath, globalContent);
+          }
+        },
+        { brainRoot: this.brainRoot }
+      );
+    } catch (err) {
+      console.warn("OrbitBrain initialization completed with warning:", err);
     }
   }
 
@@ -100,20 +111,24 @@ Global environment and tooling context. Updated automatically by the agent.
     if (!sanitized) return;
 
     const projDir = path.join(this.brainRoot, "projects", sanitized.toLowerCase());
+    const reportsDir = path.join(projDir, "reports");
+    const cartographDir = path.join(projDir, "cartograph");
     const memoriesDir = path.join(projDir, "memories");
+    const sessionsDir = path.join(memoriesDir, "sessions");
     const featuresDir = path.join(memoriesDir, "features");
     const tasksDir = path.join(memoriesDir, "tasks");
     const conceptsDir = path.join(memoriesDir, "concepts");
     const factsDir = path.join(memoriesDir, "facts");
     const archiveDir = path.join(projDir, "archive");
-    const cartographDir = path.join(projDir, "cartograph");
 
+    fs.mkdirSync(reportsDir, { recursive: true });
+    fs.mkdirSync(cartographDir, { recursive: true });
+    fs.mkdirSync(sessionsDir, { recursive: true });
     fs.mkdirSync(featuresDir, { recursive: true });
     fs.mkdirSync(tasksDir, { recursive: true });
     fs.mkdirSync(conceptsDir, { recursive: true });
     fs.mkdirSync(factsDir, { recursive: true });
     fs.mkdirSync(archiveDir, { recursive: true });
-    fs.mkdirSync(cartographDir, { recursive: true });
 
     const protocolPath = path.join(memoriesDir, "PROTOCOL.md");
     if (!fs.existsSync(protocolPath)) {
@@ -232,7 +247,7 @@ This index maps active topics and tags to their respective memory files. Update 
   }
 
   private sanitizeProjectName(name: string): string {
-    return name.split('/').map(part => part.replace(/[^a-zA-Z0-9\-_]/g, "_")).join('/');
+    return normalizeProjectKey(name);
   }
 
   private updateGlobalContextProjects(): void {
@@ -381,7 +396,7 @@ This index maps active topics and tags to their respective memory files. Update 
   }
 
   /** Migrates existing legacy reports from ~/.antigravity-forms/impacts/history/ to ~/.orbit-brain/ */
-  public migrateFromLegacy(): void {
+  public async migrateFromLegacy(): Promise<void> {
     const sentinelPath = path.join(this.brainRoot, ".migrated");
     if (fs.existsSync(sentinelPath)) {
       return;
@@ -389,7 +404,7 @@ This index maps active topics and tags to their respective memory files. Update 
 
     const legacyDir = path.join(os.homedir(), ".antigravity-forms", "impacts", "history");
     if (!fs.existsSync(legacyDir)) {
-      fs.writeFileSync(sentinelPath, "migrated", "utf-8");
+      await writeAtomic(sentinelPath, "migrated\n");
       return;
     }
 
@@ -398,17 +413,17 @@ This index maps active topics and tags to their respective memory files. Update 
       for (const file of files) {
         const fullLegacyPath = path.join(legacyDir, file);
         try {
-          const content = fs.readFileSync(fullLegacyPath, "utf-8");
+          const content = await fs.promises.readFile(fullLegacyPath, "utf-8");
           const report = JSON.parse(content) as ImpactReport;
           const projName = report.projectName || "_default";
           
           this.writeCartographReport(projName, report);
-          moveToTrash(fullLegacyPath, this.brainRoot).catch(() => {});
+          await moveToTrash(fullLegacyPath, this.brainRoot).catch(() => {});
         } catch (e) {
           console.error(`Failed to migrate legacy report file ${file}:`, e);
         }
       }
-      fs.writeFileSync(sentinelPath, "migrated", "utf-8");
+      await writeAtomic(sentinelPath, "migrated\n");
     } catch (e) {
       console.error("Failed to migrate legacy reports:", e);
     }

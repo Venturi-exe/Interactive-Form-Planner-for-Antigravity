@@ -113,8 +113,32 @@ export function resolveInside(rootDir: string, relPath: string): string {
 }
 
 /**
+ * Normalizes any string into a valid, safe project key.
+ * Converts to lowercase, replaces invalid characters with underscores,
+ * maps 'default' to '_default', and guarantees a safe key.
+ */
+export function normalizeProjectKey(key: string): string {
+  if (typeof key !== 'string' || !key.trim()) {
+    return '_default';
+  }
+
+  const lower = key.trim().toLowerCase();
+  if (lower === 'default' || lower === '_default') {
+    return '_default';
+  }
+
+  // Replace invalid characters with underscore, collapse consecutive underscores
+  let cleaned = lower.replace(/[^a-z0-9._-]/g, '_').replace(/_+/g, '_');
+  cleaned = cleaned.replace(/^_+|_+$/g, '');
+  if (!cleaned) {
+    return '_default';
+  }
+  return cleaned.slice(0, 128);
+}
+
+/**
  * Validates and normalizes project keys.
- * Lowercases input per project key casing convention.
+ * Lowercases input per project key casing convention. Throws on invalid or reserved prefixes.
  */
 export function assertProjectKey(key: string): string {
   if (typeof key !== 'string' || !key.trim()) {
