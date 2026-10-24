@@ -37,23 +37,6 @@ async function build() {
       logLevel: 'info',
     });
 
-    console.log('Bundling Orbit Quota React Webview...');
-    await esbuild.build({
-      entryPoints: [path.join(__dirname, 'quota-ui', 'Quota.tsx')],
-      bundle: true,
-      minify: true,
-      sourcemap: true,
-      outfile: path.join(__dirname, 'quota.js'),
-      loader: {
-        '.png': 'dataurl',
-        '.svg': 'text',
-      },
-      define: {
-        'process.env.NODE_ENV': '"production"',
-      },
-      logLevel: 'info',
-    });
-
     console.log('Bundling complete!');
   } catch (error) {
     console.error('Bundling failed:', error);

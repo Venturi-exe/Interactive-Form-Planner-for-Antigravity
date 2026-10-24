@@ -15,8 +15,6 @@ import { McpBridge } from "./McpBridge.js";
 import { ImpactWatcher } from "./ImpactWatcher.js";
 import { OrbitBrain } from "./OrbitBrain.js";
 import { HubPanelManager } from "./HubPanelManager.js";
-import { QuotaViewProvider } from "./quota/QuotaViewProvider.js";
-
 
 let mcpBridge: McpBridge | undefined;
 let impactWatcher: ImpactWatcher | undefined;
@@ -31,6 +29,9 @@ export function activate(context: vscode.ExtensionContext): void {
     brain.syncWorkspaceProjects();
     brain.migrateFromLegacy();
 
+    // Clear legacy quota state once (P0-4)
+    context.globalState.update("orbit.quotaHistory_v2", undefined);
+
     context.subscriptions.push(
         vscode.workspace.onDidChangeWorkspaceFolders(() => {
             brain.syncWorkspaceProjects();
@@ -38,7 +39,6 @@ export function activate(context: vscode.ExtensionContext): void {
     );
 
     const formViewProvider = new FormViewProvider(context.extensionUri, context, brain);
-    const quotaViewProvider = new QuotaViewProvider(context.extensionUri, context);
 
     // Run auto-setup for MCP and GEMINI.md
     runFirstTimeSetup(context);
@@ -55,20 +55,6 @@ export function activate(context: vscode.ExtensionContext): void {
             }
         )
     );
-
-    context.subscriptions.push(
-        vscode.window.registerWebviewViewProvider(
-            QuotaViewProvider.viewType,
-            quotaViewProvider,
-            {
-                webviewOptions: {
-                    retainContextWhenHidden: true,
-                },
-            }
-        )
-    );
-
-    context.subscriptions.push(quotaViewProvider);
 
 
     // Register the command to manually show the panel
