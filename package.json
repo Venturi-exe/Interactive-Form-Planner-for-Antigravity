@@ -122,30 +122,31 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.webview.json --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
-    "build-webview": "node src/webview/build.js",
-    "compile": "tsc -p ./ && npm run build-webview",
-    "watch": "tsc -watch -p ./",
-    "package": "npx @vscode/vsce package --no-dependencies"
+    "build-webview": "node esbuild.js",
+    "compile": "node esbuild.js",
+    "watch": "node esbuild.js",
+    "package": "npx @vscode/vsce package --no-dependencies",
+    "vscode:prepublish": "npm run typecheck && npm run lint && npm test && node esbuild.js --production",
+    "vscode:uninstall": "node ./out/uninstall.js"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
     "@types/dagre": "^0.7.52",
     "@types/node": "^22.0.0",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
     "@types/vscode": "^1.96.0",
-    "esbuild": "^0.28.2",
-    "eslint": "^10.13.0",
-    "typescript": "^5.7.0",
-    "typescript-eslint": "^8.72.0",
-    "vitest": "^5.0.5"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.0",
     "@xyflow/react": "^12.0.0",
     "dagre": "^0.8.5",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.13.0",
     "jsonc-parser": "^3.3.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.72.0",
+    "vitest": "^5.0.5",
     "zod": "^3.24.0"
-  }
+  },
+  "dependencies": {}
 }
