@@ -18,7 +18,7 @@ import { OrbitBrain } from "./OrbitBrain.js";
 import { HubPanelManager } from "./HubPanelManager.js";
 import { updateMcpConfig } from "./core/config.js";
 import { detectHost, getStorageOwner } from "./core/host.js";
-import { injectOrbitRules, getOrbitRulesTemplate, removeOrbitRules } from "./core/rules.js";
+import { injectOrbitRules, getOrbitRulesTemplate, removeOrbitRules, ORBIT_START_MARKER } from "./core/rules.js";
 import { isSubpath } from "./core/paths.js";
 import { writeAtomic } from "./core/fsx.js";
 import { runUninstall } from "./uninstall.js";
@@ -463,19 +463,57 @@ export async function runFirstTimeSetup(context: vscode.ExtensionContext, force 
         return;
     }
 
-    if (!force && context.globalState.get("setupVersion") === "9") {
+    // V-02 Remote Session Gate: Skip host setup in remote sessions
+    if (vscode.env.remoteName) {
+        console.log(`[Orbit Setup] Remote session detected (${vscode.env.remoteName}). Host ~/.gemini setup is skipped.`);
         return;
     }
 
-    try {
-        // V-02 Remote Session Gate: Skip host setup in remote sessions
-        if (vscode.env.remoteName) {
-            console.log(`[Orbit Setup] Remote session detected (${vscode.env.remoteName}). Host ~/.gemini setup is skipped.`);
+    const host = detectHost(vscode.env.appName);
+    let isRepair = false;
+
+    if (!force && context.globalState.get("setupVersion") === "9") {
+        if (host.isAntigravity) {
+            // Q-02: In Antigravity, verify that configuration hasn't been stripped externally (e.g. by VS Code uninstall)
+            let needsRepair = false;
+            if (!fs.existsSync(host.mcpConfigPath)) {
+                needsRepair = true;
+            } else {
+                try {
+                    const raw = await fs.promises.readFile(host.mcpConfigPath, "utf-8");
+                    const parsed = jsonc.parse(raw);
+                    if (!parsed?.mcpServers?.orbit && !parsed?.mcpServers?.["antigravity-planner"]) {
+                        needsRepair = true;
+                    }
+                } catch {
+                    needsRepair = true;
+                }
+            }
+
+            if (!fs.existsSync(host.geminiMdPath)) {
+                needsRepair = true;
+            } else {
+                try {
+                    const content = await fs.promises.readFile(host.geminiMdPath, "utf-8");
+                    if (!content.includes(ORBIT_START_MARKER) && !content.includes("<!-- ORBIT_RULES_START -->")) {
+                        needsRepair = true;
+                    }
+                } catch {
+                    needsRepair = true;
+                }
+            }
+
+            if (!needsRepair) {
+                return;
+            }
+            isRepair = true;
+            console.log("[Orbit Setup] Missing Orbit integration detected in Antigravity. Auto-repairing.");
+        } else {
             return;
         }
+    }
 
-        const host = detectHost(vscode.env.appName);
-
+    try {
         // V-02 Host Gate: Do not configure host GEMINI.md or mcp_config.json in non-Antigravity editors
         if (!host.isAntigravity) {
             console.log(`[Orbit Setup] Non-Antigravity editor detected (${vscode.env.appName || "unknown"}). Skipping auto-setup.`);
@@ -581,7 +619,11 @@ export async function runFirstTimeSetup(context: vscode.ExtensionContext, force 
         await injectOrbitRules(host.geminiMdPath, alignmentRule);
 
         context.globalState.update("setupVersion", "9");
-        vscode.window.showInformationMessage("Orbit: Setup complete. MCP server registered and GEMINI.md updated.");
+        if (isRepair) {
+            vscode.window.showInformationMessage("Orbit: Restored MCP server registration and assistant guidelines.");
+        } else {
+            vscode.window.showInformationMessage("Orbit: Setup complete. MCP server registered and GEMINI.md updated.");
+        }
     } catch (error) {
         console.error("Auto-setup failed:", error);
     }
