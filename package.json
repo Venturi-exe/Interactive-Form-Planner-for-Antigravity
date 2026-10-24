@@ -82,6 +82,22 @@
         "command": "orbit.openHub",
         "title": "Orbit: Open Cartograph Hub",
         "icon": "$(dashboard)"
+      },
+      {
+        "command": "orbit.setup",
+        "title": "Orbit: Run Setup"
+      },
+      {
+        "command": "orbit.repair",
+        "title": "Orbit: Repair Configuration"
+      },
+      {
+        "command": "orbit.removeIntegration",
+        "title": "Orbit: Remove Integration"
+      },
+      {
+        "command": "orbit.copySnippet",
+        "title": "Orbit: Copy Assistant Rules to Clipboard"
       }
     ],
     "menus": {
@@ -101,6 +117,22 @@
     "configuration": {
       "title": "Orbit Settings",
       "properties": {
+        "orbit.setup.mode": {
+          "type": "string",
+          "enum": ["auto", "ask", "off"],
+          "default": "auto",
+          "description": "Auto-setup mode for registering MCP server and assistant rules in ~/.gemini."
+        },
+        "orbit.privacy.recordEnvironment": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether to record OS and shell environment details in brain summaries."
+        },
+        "orbit.nodePath": {
+          "type": "string",
+          "default": "",
+          "description": "Custom Node.js binary path for running the Orbit MCP server (leave empty to use 'node' on PATH)."
+        },
         "orbit.inactivityTimeout": {
           "type": "integer",
           "default": 5,
@@ -124,7 +156,7 @@
     "test": "vitest run",
     "build-webview": "node esbuild.js",
     "compile": "node esbuild.js",
-    "watch": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
     "package": "npx @vscode/vsce package --no-dependencies",
     "vscode:prepublish": "npm run typecheck && npm run lint && npm test && node esbuild.js --production",
     "vscode:uninstall": "node ./out/uninstall.js"

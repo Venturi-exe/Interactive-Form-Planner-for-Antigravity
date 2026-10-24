@@ -17,9 +17,11 @@ import { resolveInside, assertProjectKey, assertSafeFileName, isDenied, redactPa
 import { writeAtomic, writeJsonAtomic, readJsonSafe, ensureDirSafe } from "../core/fsx.js";
 import { moveToTrash } from "../core/trash.js";
 
+declare const __ORBIT_VERSION__: string | undefined;
+
 const server = new McpServer({
     name: "orbit",
-    version: "0.4.0",
+    version: typeof __ORBIT_VERSION__ !== "undefined" ? __ORBIT_VERSION__ : "0.4.0",
 });
 
 function getIpcDirs() {

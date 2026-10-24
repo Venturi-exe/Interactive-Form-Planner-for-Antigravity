@@ -10,6 +10,7 @@ import * as vscode from "vscode";
 import * as path from "path";
 import * as os from "os";
 import * as fs from "fs";
+import * as crypto from "crypto";
 import { FormViewProvider } from "./FormViewProvider.js";
 import { McpBridge } from "./McpBridge.js";
 import { ImpactWatcher } from "./ImpactWatcher.js";
@@ -17,7 +18,9 @@ import { OrbitBrain } from "./OrbitBrain.js";
 import { HubPanelManager } from "./HubPanelManager.js";
 import { updateMcpConfig } from "./core/config.js";
 import { detectHost } from "./core/host.js";
-import { injectOrbitRules } from "./core/rules.js";
+import { injectOrbitRules, getOrbitRulesTemplate } from "./core/rules.js";
+import { writeAtomic } from "./core/fsx.js";
+import { runUninstall } from "./uninstall.js";
 
 let mcpBridge: McpBridge | undefined;
 let impactWatcher: ImpactWatcher | undefined;
@@ -47,6 +50,11 @@ export function activate(context: vscode.ExtensionContext): void {
     );
 
     const formViewProvider = new FormViewProvider(context.extensionUri, context, brain);
+
+    // Sync bundled MCP server to stable storage on every activation (V-04)
+    syncMcpServer(context).catch((err) => {
+        console.error("Orbit MCP server sync failed:", err);
+    });
 
     // Run auto-setup for MCP and GEMINI.md
     runFirstTimeSetup(context).catch((err) => {
@@ -117,9 +125,13 @@ export function activate(context: vscode.ExtensionContext): void {
             formViewProvider.refreshSidebarData();
         })
     );
-    // Demo command: shows a full Planner form with all field types + Execute button
+    // Demo command: shows a full Planner form with all field types + Execute button (V-15: dev-gated)
     context.subscriptions.push(
         vscode.commands.registerCommand("orbit.testPlanner", async () => {
+            if (context.extensionMode !== vscode.ExtensionMode.Development) {
+                vscode.window.showInformationMessage("Orbit: Demo commands are disabled in production builds.");
+                return;
+            }
             await vscode.commands.executeCommand("orbit.formView.focus");
             await new Promise((resolve) => setTimeout(resolve, 500));
 
@@ -164,7 +176,7 @@ export function activate(context: vscode.ExtensionContext): void {
                         id: "out_of_scope",
                         label: "What should the agent explicitly NOT do in this task?",
                         type: "free-text" as const,
-                        placeholder: "List anything explicitly out of scope — files to avoid, features to skip, approaches to reject, or dependencies not to install.",
+                        placeholder: "List anything explicitly out of scope - files to avoid, features to skip, approaches to reject, or dependencies not to install.",
                     },
                 ],
             };
@@ -180,9 +192,13 @@ export function activate(context: vscode.ExtensionContext): void {
         })
     );
 
-    // Demo command: pushes mock impact reports into the Cartograph and switches to the Cartograph tab
+    // Demo command: pushes mock impact reports into the Cartograph and switches to the Cartograph tab (V-15: dev-gated)
     context.subscriptions.push(
         vscode.commands.registerCommand("orbit.testCartograph", async () => {
+            if (context.extensionMode !== vscode.ExtensionMode.Development) {
+                vscode.window.showInformationMessage("Orbit: Demo commands are disabled in production builds.");
+                return;
+            }
             const mockReports = [
                 {
                     taskId: "demo-ultimate-showcase",
@@ -302,6 +318,45 @@ The goal is to demonstrate all the features of the Orbit pre-execution planner a
         })
     );
 
+    // Register setup, repair, and cleanup commands (P6-5 / P6-7)
+    context.subscriptions.push(
+        vscode.commands.registerCommand("orbit.setup", async () => {
+            await runFirstTimeSetup(context, true);
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand("orbit.repair", async () => {
+            await syncMcpServer(context);
+            await runFirstTimeSetup(context, true);
+            vscode.window.showInformationMessage("Orbit: Configuration repaired and MCP server refreshed.");
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand("orbit.removeIntegration", async () => {
+            const confirm = await vscode.window.showWarningMessage(
+                "Remove Orbit MCP server registration and assistant guidelines from ~/.gemini?",
+                "Remove",
+                "Cancel"
+            );
+            if (confirm === "Remove") {
+                await runUninstall();
+                context.globalState.update("setupVersion", undefined);
+                context.globalState.update("orbit.setupConsented", undefined);
+                vscode.window.showInformationMessage("Orbit: Integration removed from ~/.gemini.");
+            }
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand("orbit.copySnippet", async () => {
+            const rules = getOrbitRulesTemplate();
+            await vscode.env.clipboard.writeText(rules);
+            vscode.window.showInformationMessage("Orbit: Assistant guidelines copied to clipboard.");
+        })
+    );
+
     // Start the file-based IPC bridge
     mcpBridge = new McpBridge(formViewProvider);
     mcpBridge.start();
@@ -322,225 +377,119 @@ export function deactivate(): void {
 }
 
 /**
- * Automatically configures the MCP server and GEMINI.md rule on first install or update.
+ * Synchronizes the bundled MCP server to stable globalStorage directory.
+ * Compares SHA-256 hashes to guarantee the installed copy is always up-to-date across updates (V-04).
  */
-async function runFirstTimeSetup(context: vscode.ExtensionContext): Promise<void> {
-    if (context.globalState.get("setupVersion") === "9") {
+export async function syncMcpServer(context: vscode.ExtensionContext): Promise<string> {
+    const stableDir = path.join(context.globalStorageUri.fsPath, "mcp-server");
+    if (!fs.existsSync(stableDir)) {
+        await fs.promises.mkdir(stableDir, { recursive: true });
+    }
+    const sourceServerPath = path.join(context.extensionPath, "out", "mcp-server", "index.js");
+    const stableServerPath = path.join(stableDir, "index.js");
+
+    if (fs.existsSync(sourceServerPath)) {
+        let shouldCopy = !fs.existsSync(stableServerPath);
+        if (!shouldCopy) {
+            try {
+                const sourceBuf = await fs.promises.readFile(sourceServerPath);
+                const stableBuf = await fs.promises.readFile(stableServerPath);
+                const sourceHash = crypto.createHash("sha256").update(sourceBuf).digest("hex");
+                const stableHash = crypto.createHash("sha256").update(stableBuf).digest("hex");
+                if (sourceHash !== stableHash) {
+                    shouldCopy = true;
+                }
+            } catch {
+                shouldCopy = true;
+            }
+        }
+        if (shouldCopy) {
+            const content = await fs.promises.readFile(sourceServerPath, "utf-8");
+            await writeAtomic(stableServerPath, content);
+            console.log("[Orbit Setup] Synchronized MCP server bundle to stable storage.");
+        }
+    }
+    return stableServerPath;
+}
+
+/**
+ * Automatically configures the MCP server and GEMINI.md rules on first install or update.
+ */
+export async function runFirstTimeSetup(context: vscode.ExtensionContext, force = false): Promise<void> {
+    // Always sync server bundle regardless of setupVersion (V-04)
+    const stableServerPath = await syncMcpServer(context);
+
+    if (!force && context.globalState.get("setupVersion") === "9") {
         return;
     }
 
     try {
+        // V-02 Remote Session Gate: Skip host setup in remote sessions
+        if (vscode.env.remoteName) {
+            console.log(`[Orbit Setup] Remote session detected (${vscode.env.remoteName}). Host ~/.gemini setup is skipped.`);
+            return;
+        }
+
         const host = detectHost(vscode.env.appName);
 
-        // V-02 Minimal Host Gate: Do not configure host GEMINI.md or mcp_config.json in non-Antigravity editors
+        // V-02 Host Gate: Do not configure host GEMINI.md or mcp_config.json in non-Antigravity editors
         if (!host.isAntigravity) {
             console.log(`[Orbit Setup] Non-Antigravity editor detected (${vscode.env.appName || "unknown"}). Skipping auto-setup.`);
             return;
         }
 
-        // 1. Stable server copy in globalStorageUri to keep server path stable across updates
-        const stableDir = path.join(context.globalStorageUri.fsPath, "mcp-server");
-        if (!fs.existsSync(stableDir)) {
-            await fs.promises.mkdir(stableDir, { recursive: true });
-        }
-        const sourceServerPath = path.join(context.extensionPath, "out", "mcp-server", "index.js");
-        const stableServerPath = path.join(stableDir, "index.js");
+        // V-02 Setup Mode and Consent Gate
+        const setupConfig = vscode.workspace.getConfiguration("orbit.setup");
+        const setupMode = setupConfig.get<string>("mode", "auto");
 
-        if (fs.existsSync(sourceServerPath)) {
-            await fs.promises.copyFile(sourceServerPath, stableServerPath);
+        if (!force && setupMode === "off") {
+            console.log("[Orbit Setup] Setup mode is configured to 'off'. Skipping auto-setup.");
+            return;
         }
 
-        // 2. Configure MCP server in host mcp_config.json
+        if (!force && setupMode === "ask") {
+            const consented = context.globalState.get<boolean>("orbit.setupConsented", false);
+            if (!consented) {
+                const choice = await vscode.window.showInformationMessage(
+                    "Orbit: Register Orbit MCP server and assistant guidelines in ~/.gemini?",
+                    "Yes",
+                    "Always",
+                    "Not Now"
+                );
+                if (choice === "Always") {
+                    await setupConfig.update("mode", "auto", vscode.ConfigurationTarget.Global);
+                } else if (choice === "Yes") {
+                    await context.globalState.update("orbit.setupConsented", true);
+                } else {
+                    console.log("[Orbit Setup] User declined or deferred setup.");
+                    return;
+                }
+            }
+        }
+
+        // 2. Configure MCP server in host mcp_config.json (P6-3 custom node command)
         if (!fs.existsSync(host.configDir)) {
             await fs.promises.mkdir(host.configDir, { recursive: true });
         }
-        const configResult = await updateMcpConfig(host.mcpConfigPath, stableServerPath);
+        const customNodePath = vscode.workspace.getConfiguration("orbit").get<string>("nodePath", "").trim();
+        const nodeCommand = customNodePath || "node";
+
+        const configResult = await updateMcpConfig(host.mcpConfigPath, stableServerPath, nodeCommand);
         if (!configResult.success) {
             vscode.window.showErrorMessage(`Orbit: ${configResult.error}`);
             return;
         }
 
-        // 3. Configure GEMINI.md rules with marker boundaries
-        const alignmentRule = `
-## Orbit Planner: Mandatory Usage Policy
-
-The \\\`orbit_planner\\\` MCP tool is a near-mandatory step in the response workflow. Default behavior: always use the form.
-
-The agent MUST NOT use the \\\`default_api:ask_question\\\` tool under any circumstances. The \\\`orbit_planner\\\` tool MUST be used instead at all times for asking questions, presenting options, or seeking clarification.
-
-**Skip conditions (all must apply to skip):**
-- The prompt is fully self-contained with zero ambiguity
-- OR the request is a simple factual lookup or research query with no deliverable to produce
-- OR the task is a trivial single-operation action (e.g., "rename this variable", "fix this typo")
-
-The burden of proof is on the skip condition, not on the trigger condition. If there is even slight ambiguity, the form must be used.
-
-**Standard triggers (use the form when any are true):**
-- A new feature or page is being built
-- An existing file is being changed
-- The task is ambiguous or missing detail
-- You have a better approach to suggest
-- The change has side effects on other parts of the project
-- Multiple valid approaches exist
-
-## Deep Prompt Refining
-
-When a user prompt contains \\\`@trigger deep prompt refining\\\`, enter an iterative planning loop:
-1. Send an \\\`orbit_planner\\\` form with \\\`showExecuteButton: true\\\`.
-2. After each submission, output a brief plan summary in the chat response.
-3. Send a follow-up form to refine further, again with \\\`showExecuteButton: true\\\`.
-4. Repeat until the user clicks **Execute Plan**.
-5. When the response contains \\\`"action": "execute"\\\`, stop planning immediately and proceed to the Planning Context aggregation step below.
-
-## Orbit Planner: Clarification Rule
-
-If calling \\\`orbit_planner\\\` results in a JSON response containing \\\`clarificationRequest\\\`, the agent MUST immediately stop execution, address the question asked by the user, explain any available choices or trade-offs, and present a new plan with an updated form to let the user proceed.
-
-## Orbit Planner: Timeout Rule
-
-If calling \\\`orbit_planner\\\` results in a JSON response with \\\`"action": "timeout"\\\`, the agent MUST immediately halt execution, make no modifications to the workspace, edit no files, and explicitly inform the user that their input is required to continue. The agent's message MUST list the exact pending questions and options that were timed out.
-
-## Orbit Cartograph: Rich Planning Context and Trigger Rules
-
-The \\\`write_impact_report\\\` tool MUST be called as the final action of any response turn that meets the trigger conditions. The scope of this report is strictly limited to the **current response turn only** (never look back at older turns in the conversation).
-
-**Trigger Conditions (Call only if at least one is true):**
-- One or more files were created, edited, moved, or deleted during this turn.
-- \\\`orbit_planner\\\` was used and alignment decisions were made (even if no files changed).
-- Important planning occurred (e.g., creating an implementation plan, architecture design) even if \\\`orbit_planner\\\` was bypassed.
-
-*Never* call \\\`write_impact_report\\\` after pure research, simple clarification chats, or read-only turns with no edits or planning decisions.
-
-**Aggregation guidelines for \\\`write_impact_report\\\` fields:**
-- **\\\`planningContext\\\`**: You must consolidate all alignment questions asked, decisions made, technical assumptions identified, and step-by-step roadmap items from **this response turn only** into the structured \\\`planningContext\\\` parameter.
-- **\\\`changes[].description\\\`**: Provide a rich, human-readable explanation of exactly what was changed in each modified file and why.
-
-## Orbit Memory System
-
-The Orbit Memory System is a persistent brain stored at \\\`~/.orbit-brain/\\\`. It preserves project context,
-session observations, architectural decisions, and facts across conversations.
-
-**Project Assignment for Cartograph:**
-When calling \\\`write_impact_report\\\`, set \\\`projectName\\\` to the name of the project directory in the orbit-brain
-that the work belongs to. Use \\\`orbit_memory\\\` with \\\`action: "list_projects"\\\` to discover available projects.
-If you cannot determine the project, omit \\\`projectName\\\` and it will be placed in the Default group.
-
-**"update memory system" Command:**
-When the user says "update memory system", use the \\\`orbit_memory\\\` MCP tool to:
-1. List existing projects with \\\`list_projects\\\`.
-2. Ensure a project directory exists for each workspace worked on with \\\`ensure_project\\\`.
-3. Analyze session changes and categorize them by topic (e.g., specific features, tasks, or bug fixes).
-4. For each topic, check if a memory file already exists in \\\`<project>/memories/features/\\\` or \\\`<project>/memories/tasks/\\\`. 
-5. If it exists, append the new changes chronologically with \\\`read_file\\\` and \\\`write_file\\\`. If not, create a new topic file.
-6. Update \\\`<project>/memories/INDEX.md\\\`'s Active Topics section to link the modified files.
-7. Review any Default-group Cartograph diagrams and reassign them to proper projects.
-8. Update \\\`global_context_summary.md\\\` and \\\`BRAIN_ARCHITECTURE.md\\\` if needed.
-
-## Orbit Cartograph: Auto-Merge Protocol
-
-After every successful \\\`write_impact_report\\\` call, the tool returns a list of existing reports
-for the same project. You MUST check this list and perform the following:
-
-1. Read each existing report's summary and file paths using \\\`orbit_memory\\\` with
-   \\\`action: "read_cartograph_report"\\\`.
-2. Determine if any existing report discusses the same feature, file group, UI component,
-   bug fix, or implementation area as the new report.
-   Relatedness signals: overlapping file paths, similar summary topics, same feature area.
-3. If a related report exists:
-   a. Create a merged report combining both, preserving chronological order in the \\\`timeline\\\` array.
-   b. Give the merged report a clear, specific summary name describing the actual topic
-      (e.g., "Cartograph Header Layout and Styling Fixes", NOT "Consolidated Project Maps").
-   c. Write the merged report using \\\`orbit_memory\\\` with \\\`action: "write_cartograph_report"\\\`.
-   d. Delete the original separate reports using \\\`action: "delete_cartograph_report"\\\`.
-4. If no related reports exist, take no merge action.
-
-## Orbit Cartograph: Organize All Reports
-
-When the user asks to "organize cartograph reports", "clean up reports", or similar:
-
-1. Call \\\`orbit_memory\\\` with \\\`action: "list_all_cartograph_reports"\\\` to get all reports across projects.
-2. For reports in the "Default" project, determine the correct project by examining file paths
-   and move them using \\\`action: "move_cartograph_report"\\\`.
-3. Within each project, read all reports and identify groups of related reports.
-4. Merge related groups following the Auto-Merge Protocol above.
-5. Ensure every merged report has a clear, descriptive name.
-
-## Orbit Cartograph: Merged Report Format
-
-Merged reports MUST use this structure:
-- \\\`isMerged: true\\\`
-- \\\`mergedFrom: [original taskId array]\\\`
-- \\\`timeline: [{ taskId, timestamp, summary, changes, planningContext }, ...]\\\` sorted oldest-first
-- \\\`changes\\\`: aggregated unique file changes across all merged tasks
-- \\\`summary\\\`: a clear topic-specific name chosen by the agent
-- \\\`timestamp\\\`: the most recent timestamp from the merged tasks
-
-## Orbit Cartograph: Artifact Protocol
-
-After each step, emit a single-line progress note in chat:
-\\\`\\\`\\\`
-[x] [step completed] - [files affected]
-\\\`\\\`\\\`
-
-At task completion, the full report goes into the Cartograph via \\\`write_impact_report\\\`. In chat, emit only a short pointer:
-\\\`\\\`\\\`
-## Done
-Full walkthrough submitted to Cartograph.
-- Self-corrections: [list or "none"]
-- Notes: [any warnings or scope limits hit]
-\\\`\\\`\\\`
-
-## Walkthrough Report Format
-
-Every \\\`write_impact_report\\\` call MUST populate \\\`planningContext.notes\\\` with a complete walkthrough of the agent's work. This is the primary report surface shown in the Cartograph Hub under the DECISIONS & NOTES tab.
-
-The \\\`notes\\\` field MUST contain all 8 sections below (structured as a readable walkthrough narrative). Use section headers. Write prose under each section - not bullet-only summaries. Omit a section only if it has zero meaningful content.
-
-**Required sections for \\\`planningContext.notes\\\`:**
-
-\\\`\\\`\\\`
-## 1. Prompt Understanding
-How the agent interpreted the request. The main goal. Assumptions made. Ambiguities or missing information.
-
-## 2. Task Breakdown
-List of tasks decided upon. Why each was necessary. How each maps to the user's request.
-
-## 3. Tool Usage
-Which tools were used, why, and the result of each call. Include files read, commands run, searches made, edits performed.
-
-## 4. Changes Made
-Every file created, modified, or deleted. What changed and why. Connection back to the original request.
-
-## 5. Decision Process
-Key implementation decisions. Cases where the approach changed and why. Better methods discovered mid-task.
-
-## 6. Issues Discovered
-Bugs, inconsistencies, missing files, failed commands, or unexpected behavior. Whether each was fixed or left unresolved, and why.
-
-## 7. Validation
-How the work was verified. Tests run, commands executed, files checked, screenshots taken. Result of each step. If validation was not possible, why.
-
-## 8. Final Outcome
-What was completed. What changed for the user. Remaining limitations, risks, or follow-up work.
-\\\`\\\`\\\`
-
-**Populate the other \\\`planningContext\\\` fields in parallel:**
-- \\\`roadmap\\\`: the step-by-step execution plan actually followed
-- \\\`assumptions\\\`: technical or scope assumptions made
-- \\\`userDecisions\\\`: any questions asked via orbit_planner and the user's answers
-- \\\`questionsAsked\\\`: alignment questions posed, even if answered
-- \\\`outOfScope\\\`: items explicitly not addressed
-
-**Per-file \\\`changes[].description\\\`**: For each changed file, write a full sentence explaining what changed and why - not just a label. This appears in the Cartograph Inspector when the file node is selected.
-`;
-
+        // 3. Configure GEMINI.md rules with versioned marker boundaries (V-10 / V-12)
+        const alignmentRule = getOrbitRulesTemplate();
         await injectOrbitRules(host.geminiMdPath, alignmentRule);
 
         context.globalState.update("setupVersion", "9");
-        vscode.window.showInformationMessage("Orbit: Auto-setup complete. MCP server registered and GEMINI.md updated to version 9.");
+        vscode.window.showInformationMessage("Orbit: Setup complete. MCP server registered and GEMINI.md updated.");
     } catch (error) {
         console.error("Auto-setup failed:", error);
     }
 }
+
 
 

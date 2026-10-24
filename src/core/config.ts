@@ -17,7 +17,8 @@ export interface UpdateMcpConfigResult {
  */
 export async function updateMcpConfig(
     mcpConfigPath: string,
-    serverPath: string
+    serverPath: string,
+    nodeCommand: string = "node"
 ): Promise<UpdateMcpConfigResult> {
     let backedUp = false;
     const normalizedServerPath = serverPath.replace(/\\/g, "/");
@@ -73,7 +74,7 @@ export async function updateMcpConfig(
 
         // Register or update orbit MCP server while preserving user fields (like env or disabled)
         if (parsed.mcpServers && parsed.mcpServers["orbit"] && typeof parsed.mcpServers["orbit"] === "object") {
-            const editsCmd = jsonc.modify(raw, ["mcpServers", "orbit", "command"], "node", formatOpts);
+            const editsCmd = jsonc.modify(raw, ["mcpServers", "orbit", "command"], nodeCommand, formatOpts);
             raw = jsonc.applyEdits(raw, editsCmd);
             const editsArgs = jsonc.modify(raw, ["mcpServers", "orbit", "args"], [normalizedServerPath], formatOpts);
             raw = jsonc.applyEdits(raw, editsArgs);
@@ -82,7 +83,7 @@ export async function updateMcpConfig(
                 raw,
                 ["mcpServers", "orbit"],
                 {
-                    command: "node",
+                    command: nodeCommand,
                     args: [normalizedServerPath],
                 },
                 formatOpts
@@ -112,7 +113,7 @@ export async function updateMcpConfig(
         const initialConfig = {
             mcpServers: {
                 orbit: {
-                    command: "node",
+                    command: nodeCommand,
                     args: [normalizedServerPath],
                 },
             },

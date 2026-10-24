@@ -62,6 +62,30 @@ describe("rules and host management", () => {
         expect(content).toContain("Stay positive.");
     });
 
+    it("refuses to edit and halts if orphaned marker is detected (V-10)", async () => {
+        const orphaned = `# My User Rules\n${ORBIT_START_MARKER}\nUnclosed content without end marker`;
+        fs.writeFileSync(geminiMdPath, orphaned, "utf-8");
+
+        await expect(injectOrbitRules(geminiMdPath, "new rules")).rejects.toThrow(/Orphaned Orbit start marker/i);
+
+        // Content remains untouched
+        expect(fs.readFileSync(geminiMdPath, "utf-8")).toBe(orphaned);
+    });
+
+    it("preserves Windows CRLF line endings and creates backup (V-10)", async () => {
+        const crlfInitial = `# User Header\r\n\r\nSome instructions\r\n`;
+        fs.writeFileSync(geminiMdPath, crlfInitial, "utf-8");
+
+        await injectOrbitRules(geminiMdPath, "Rule line 1\r\nRule line 2");
+
+        expect(fs.existsSync(`${geminiMdPath}.orbit.bak`)).toBe(true);
+        expect(fs.readFileSync(`${geminiMdPath}.orbit.bak`, "utf-8")).toBe(crlfInitial);
+
+        const updated = fs.readFileSync(geminiMdPath, "utf-8");
+        expect(updated).toContain("\r\n");
+        expect(updated.includes("\r\n")).toBe(true);
+    });
+
     it("detectHost identifies environment correctly", () => {
         const host = detectHost("Google Antigravity IDE");
         expect(host.isAntigravity).toBe(true);

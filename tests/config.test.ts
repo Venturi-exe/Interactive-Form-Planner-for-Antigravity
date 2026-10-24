@@ -131,4 +131,11 @@ describe("updateMcpConfig", () => {
             args: ["C:/test/index.js"],
         });
     });
+
+    it("uses custom nodeCommand when specified", async () => {
+        const result = await updateMcpConfig(configPath, "C:\\test\\index.js", "C:\\custom\\node.exe");
+        expect(result.success).toBe(true);
+        const updated = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+        expect(updated.mcpServers.orbit.command).toBe("C:\\custom\\node.exe");
+    });
 });

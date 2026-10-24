@@ -4,6 +4,7 @@ const fs = require('fs');
 const pkg = require('./package.json');
 
 const isProduction = process.argv.includes('--production');
+const isWatch = process.argv.includes('--watch');
 
 const commonNodeConfig = {
   platform: 'node',
@@ -22,7 +23,7 @@ const commonNodeConfig = {
 
 async function buildAll() {
   try {
-    console.log(`[esbuild] Building Orbit (${isProduction ? 'PRODUCTION' : 'DEVELOPMENT'})...`);
+    console.log(`[esbuild] Building Orbit (${isProduction ? 'PRODUCTION' : 'DEVELOPMENT'}${isWatch ? ' - WATCH MODE' : ''})...`);
 
     if (isProduction) {
       const outDir = path.join(__dirname, 'out');
@@ -31,81 +32,84 @@ async function buildAll() {
       }
     }
 
-    // 1. Extension bundle
-    console.log('[esbuild] Bundling extension...');
-    await esbuild.build({
-      ...commonNodeConfig,
-      entryPoints: [path.join(__dirname, 'src', 'extension.ts')],
-      outfile: path.join(__dirname, 'out', 'extension.js'),
-      external: ['vscode'],
-    });
-
-    // 2. Standalone MCP Server bundle (inlining @modelcontextprotocol/sdk, zod, etc.)
-    console.log('[esbuild] Bundling standalone MCP server...');
-    await esbuild.build({
-      ...commonNodeConfig,
-      entryPoints: [path.join(__dirname, 'src', 'mcp-server', 'index.ts')],
-      outfile: path.join(__dirname, 'out', 'mcp-server', 'index.js'),
-      external: [],
-    });
-
-    // 3. Uninstall hook bundle
-    console.log('[esbuild] Bundling uninstall hook...');
-    await esbuild.build({
-      ...commonNodeConfig,
-      entryPoints: [path.join(__dirname, 'src', 'uninstall.ts')],
-      outfile: path.join(__dirname, 'out', 'uninstall.js'),
-      external: [],
-    });
-
-    // 4. Cartograph Webview bundle
-    console.log('[esbuild] Bundling Cartograph webview...');
-    await esbuild.build({
-      entryPoints: [path.join(__dirname, 'src', 'webview', 'cartograph-ui', 'index.tsx')],
-      bundle: true,
-      minify: isProduction,
-      sourcemap: !isProduction,
-      outfile: path.join(__dirname, 'src', 'webview', 'cartograph.js'),
-      loader: {
-        '.png': 'dataurl',
-        '.svg': 'text',
+    const configs = [
+      // 1. Extension bundle
+      {
+        ...commonNodeConfig,
+        entryPoints: [path.join(__dirname, 'src', 'extension.ts')],
+        outfile: path.join(__dirname, 'out', 'extension.js'),
+        external: ['vscode'],
       },
-      define: {
-        'process.env.NODE_ENV': isProduction ? '"production"' : '"development"',
-        '__ORBIT_VERSION__': JSON.stringify(pkg.version),
-        '__DEV__': isProduction ? 'false' : 'true',
+      // 2. Standalone MCP Server bundle
+      {
+        ...commonNodeConfig,
+        entryPoints: [path.join(__dirname, 'src', 'mcp-server', 'index.ts')],
+        outfile: path.join(__dirname, 'out', 'mcp-server', 'index.js'),
+        external: [],
       },
-      logLevel: 'info',
-    });
+      // 3. Uninstall hook bundle
+      {
+        ...commonNodeConfig,
+        entryPoints: [path.join(__dirname, 'src', 'uninstall.ts')],
+        outfile: path.join(__dirname, 'out', 'uninstall.js'),
+        external: [],
+      },
+      // 4. Cartograph Webview bundle
+      {
+        entryPoints: [path.join(__dirname, 'src', 'webview', 'cartograph-ui', 'index.tsx')],
+        bundle: true,
+        minify: isProduction,
+        sourcemap: !isProduction,
+        outfile: path.join(__dirname, 'src', 'webview', 'cartograph.js'),
+        loader: {
+          '.png': 'dataurl',
+          '.svg': 'text',
+        },
+        define: {
+          'process.env.NODE_ENV': isProduction ? '"production"' : '"development"',
+          '__ORBIT_VERSION__': JSON.stringify(pkg.version),
+          '__DEV__': isProduction ? 'false' : 'true',
+        },
+        logLevel: 'info',
+      },
+      // 5. Hub Webview bundle
+      {
+        entryPoints: [path.join(__dirname, 'src', 'webview', 'hub-ui', 'Hub.tsx')],
+        bundle: true,
+        minify: isProduction,
+        sourcemap: !isProduction,
+        outfile: path.join(__dirname, 'src', 'webview', 'hub.js'),
+        loader: {
+          '.png': 'dataurl',
+          '.svg': 'text',
+        },
+        define: {
+          'process.env.NODE_ENV': isProduction ? '"production"' : '"development"',
+          '__ORBIT_VERSION__': JSON.stringify(pkg.version),
+          '__DEV__': isProduction ? 'false' : 'true',
+        },
+        logLevel: 'info',
+      },
+      // 6. Legacy stub bundle
+      {
+        ...commonNodeConfig,
+        entryPoints: [path.join(__dirname, 'legacy-stub', 'extension.ts')],
+        outfile: path.join(__dirname, 'legacy-stub', 'extension.js'),
+        external: ['vscode'],
+      },
+    ];
 
-    // 5. Hub Webview bundle
-    console.log('[esbuild] Bundling Cartograph Hub webview...');
-    await esbuild.build({
-      entryPoints: [path.join(__dirname, 'src', 'webview', 'hub-ui', 'Hub.tsx')],
-      bundle: true,
-      minify: isProduction,
-      sourcemap: !isProduction,
-      outfile: path.join(__dirname, 'src', 'webview', 'hub.js'),
-      loader: {
-        '.png': 'dataurl',
-        '.svg': 'text',
-      },
-      define: {
-        'process.env.NODE_ENV': isProduction ? '"production"' : '"development"',
-        '__ORBIT_VERSION__': JSON.stringify(pkg.version),
-        '__DEV__': isProduction ? 'false' : 'true',
-      },
-      logLevel: 'info',
-    });
+    if (isWatch) {
+      console.log('[esbuild] Initializing watch contexts...');
+      const contexts = await Promise.all(configs.map(cfg => esbuild.context(cfg)));
+      await Promise.all(contexts.map(ctx => ctx.watch()));
+      console.log('[esbuild] Watching for file changes...');
+      return;
+    }
 
-    // 6. Legacy stub bundle
-    console.log('[esbuild] Bundling legacy stub...');
-    await esbuild.build({
-      ...commonNodeConfig,
-      entryPoints: [path.join(__dirname, 'legacy-stub', 'extension.ts')],
-      outfile: path.join(__dirname, 'legacy-stub', 'extension.js'),
-      external: ['vscode'],
-    });
+    for (const cfg of configs) {
+      await esbuild.build(cfg);
+    }
 
     console.log('[esbuild] Build finished successfully!');
   } catch (error) {

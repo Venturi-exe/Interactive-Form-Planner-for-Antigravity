@@ -1,4 +1,3 @@
-import * as vscode from "vscode";
 import * as path from "path";
 import * as os from "os";
 import * as fs from "fs";
@@ -8,6 +7,14 @@ import { moveToTrash } from "./core/trash.js";
 import { writeJsonAtomic, writeAtomic, ensureDirSafe } from "./core/fsx.js";
 import { resolveInside, assertSafeFileName, normalizeProjectKey } from "./core/paths.js";
 import { withLock } from "./core/lock.js";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let vscodeModule: any;
+try {
+  vscodeModule = require("vscode");
+} catch {
+  vscodeModule = undefined;
+}
 
 export class OrbitBrain {
   private readonly brainRoot: string;
@@ -61,9 +68,19 @@ COHERENCE & MAINTENANCE PROTOCOL (Use when running "update memory system"):
 
           const globalContextPath = path.join(this.brainRoot, "global_context_summary.md");
           if (!fs.existsSync(globalContextPath)) {
-            const platformStr = os.platform();
-            const releaseStr = os.release();
-            const shellStr = process.env.SHELL || (os.platform() === "win32" ? "powershell.exe" : "bash");
+            let recordEnv = false;
+            try {
+              if (vscodeModule && vscodeModule.workspace && typeof vscodeModule.workspace.getConfiguration === "function") {
+                recordEnv = vscodeModule.workspace.getConfiguration("orbit.privacy").get("recordEnvironment", false) ?? false;
+              } else {
+                recordEnv = process.env.ORBIT_RECORD_ENVIRONMENT === "true";
+              }
+            } catch {
+              recordEnv = false;
+            }
+
+            const platformStr = recordEnv ? `${os.platform()} ${os.release()}` : "[Redacted / privacy disabled]";
+            const shellStr = recordEnv ? (process.env.SHELL || (os.platform() === "win32" ? "powershell.exe" : "bash")) : "[Redacted / privacy disabled]";
             const globalContent = `<!--
 [ORBIT MEMORY SYSTEM]
 Global environment and tooling context. Updated automatically by the agent.
@@ -72,7 +89,7 @@ Global environment and tooling context. Updated automatically by the agent.
 # Global Context Summary
 
 ## Environment
-- **OS**: ${platformStr} ${releaseStr}
+- **OS**: ${platformStr}
 - **Shell**: ${shellStr}
 
 ## Registered Projects
@@ -83,6 +100,8 @@ Global environment and tooling context. Updated automatically by the agent.
 `;
             await writeAtomic(globalContextPath, globalContent);
           }
+
+          this.updateGlobalContextEnvironment();
         },
         { brainRoot: this.brainRoot }
       );
@@ -235,7 +254,7 @@ This index maps active topics and tags to their respective memory files. Update 
 
   /** Auto-detects projects from VS Code workspace folders and ensures they exist in the brain. */
   public syncWorkspaceProjects(): void {
-    const folders = vscode.workspace.workspaceFolders;
+    const folders = vscodeModule?.workspace?.workspaceFolders;
     if (!folders) return;
 
     for (const folder of folders) {
@@ -268,6 +287,39 @@ This index maps active topics and tags to their respective memory files. Update 
       fs.writeFileSync(globalContextPath, content, "utf-8");
     } catch (e) {
       console.error("Failed to update global_context_summary.md:", e);
+    }
+  }
+
+  private updateGlobalContextEnvironment(): void {
+    const globalContextPath = path.join(this.brainRoot, "global_context_summary.md");
+    if (!fs.existsSync(globalContextPath)) return;
+
+    let recordEnv = false;
+    try {
+      if (vscodeModule && vscodeModule.workspace && typeof vscodeModule.workspace.getConfiguration === "function") {
+        recordEnv = vscodeModule.workspace.getConfiguration("orbit.privacy").get("recordEnvironment", false) ?? false;
+      } else {
+        recordEnv = process.env.ORBIT_RECORD_ENVIRONMENT === "true";
+      }
+    } catch {
+      recordEnv = false;
+    }
+
+    const platformStr = recordEnv ? `${os.platform()} ${os.release()}` : "[Redacted / privacy disabled]";
+    const shellStr = recordEnv ? (process.env.SHELL || (os.platform() === "win32" ? "powershell.exe" : "bash")) : "[Redacted / privacy disabled]";
+    const envBlock = `- **OS**: ${platformStr}\n- **Shell**: ${shellStr}`;
+
+    try {
+      let content = fs.readFileSync(globalContextPath, "utf-8");
+      const regex = /(## Environment\s*)([\s\S]*?)(?=\n\n##|$)/;
+      if (regex.test(content)) {
+        content = content.replace(regex, `$1\n${envBlock}\n`);
+      } else {
+        content += `\n\n## Environment\n${envBlock}\n`;
+      }
+      fs.writeFileSync(globalContextPath, content, "utf-8");
+    } catch (e) {
+      console.error("Failed to update environment in global_context_summary.md:", e);
     }
   }
 
