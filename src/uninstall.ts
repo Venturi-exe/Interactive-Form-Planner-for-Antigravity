@@ -6,6 +6,7 @@ import * as fs from "fs";
 import * as jsonc from "jsonc-parser";
 import { detectHost } from "./core/host.js";
 import { removeOrbitRules } from "./core/rules.js";
+import { writeAtomic } from "./core/fsx.js";
 
 export async function runUninstall(): Promise<void> {
     try {
@@ -31,10 +32,36 @@ export async function runUninstall(): Promise<void> {
                 const errors: jsonc.ParseError[] = [];
                 const config = jsonc.parse(raw, errors, { allowTrailingComma: true });
 
-                if (config && config.mcpServers && config.mcpServers.orbit) {
-                    delete config.mcpServers.orbit;
-                    fs.writeFileSync(host.mcpConfigPath, JSON.stringify(config, null, 2) + "\n", "utf-8");
-                    console.log("[Orbit Uninstall] Removed Orbit MCP server from mcp_config.json");
+                // V-03: If mcp_config.json has parse errors, abort immediately to protect user configuration
+                if (errors.length > 0 || config === undefined || typeof config !== "object" || config === null) {
+                    console.error("[Orbit Uninstall] Syntax errors detected in mcp_config.json. Aborting MCP server cleanup to avoid corrupting user configuration.");
+                    return;
+                }
+
+                if (config.mcpServers && config.mcpServers.orbit) {
+                    const orbitEntry = config.mcpServers.orbit;
+                    // V-03: Verify that mcpServers.orbit actually belongs to Orbit before removal
+                    const isOrbitServer =
+                        (Array.isArray(orbitEntry.args) && orbitEntry.args.some((a: unknown) => typeof a === "string" && (a.includes("orbit") || a.includes("mcp-server")))) ||
+                        (typeof orbitEntry.command === "string" && orbitEntry.command.includes("orbit"));
+
+                    if (isOrbitServer) {
+                        // Backup before modifying if backup does not already exist
+                        const backupPath = `${host.mcpConfigPath}.orbit.bak`;
+                        if (!fs.existsSync(backupPath)) {
+                            fs.copyFileSync(host.mcpConfigPath, backupPath);
+                        }
+
+                        // Use jsonc.modify and applyEdits to preserve comments, indentation, and trailing commas
+                        const edits = jsonc.modify(raw, ["mcpServers", "orbit"], undefined, {
+                            formattingOptions: { insertSpaces: true, tabSize: 2 },
+                        });
+                        const updated = jsonc.applyEdits(raw, edits);
+                        await writeAtomic(host.mcpConfigPath, updated);
+                        console.log("[Orbit Uninstall] Removed Orbit MCP server from mcp_config.json");
+                    } else {
+                        console.log("[Orbit Uninstall] mcpServers.orbit does not appear to belong to Orbit. Skipping removal.");
+                    }
                 }
             } catch (err) {
                 console.error("[Orbit Uninstall] Failed to clean mcp_config.json:", err);
@@ -53,3 +80,4 @@ if (require.main === module) {
         process.exit(1);
     });
 }
+

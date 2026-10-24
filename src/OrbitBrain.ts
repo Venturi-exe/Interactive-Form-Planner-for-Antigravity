@@ -6,6 +6,7 @@ import { ImpactReport } from "./types.js";
 import { initBrainFromTemplate, migrateToLayoutV3 } from "./core/migration.js";
 import { moveToTrash } from "./core/trash.js";
 import { writeJsonAtomic, ensureDirSafe } from "./core/fsx.js";
+import { resolveInside, assertSafeFileName } from "./core/paths.js";
 
 export class OrbitBrain {
   private readonly brainRoot: string;
@@ -288,33 +289,39 @@ This index maps active topics and tags to their respective memory files. Update 
     const cartographDir = path.join(projDir, "cartograph");
     fs.mkdirSync(cartographDir, { recursive: true });
 
-    const name = filename || `${report.taskId.replace(/[^a-zA-Z0-9\-_]/g, "_")}_${report.timestamp.replace(/[^a-zA-Z0-9\-_]/g, "_")}.json`;
-    const fullPath = path.join(cartographDir, name);
+    const safeName = filename
+      ? assertSafeFileName(filename)
+      : `${report.taskId.replace(/[^a-zA-Z0-9\-_]/g, "_")}_${report.timestamp.replace(/[^a-zA-Z0-9\-_]/g, "_")}.json`;
+    const fullPath = resolveInside(cartographDir, safeName);
 
     writeJsonAtomic(fullPath, report).catch((err) => {
-      console.error(`Failed atomic write of cartograph report ${name}:`, err);
+      console.error(`Failed atomic write of cartograph report ${safeName}:`, err);
     });
-    return name;
+    return safeName;
   }
 
   /** Deletes a specific cartograph report by moving it to .trash. */
   public deleteCartographReport(projectName: string, filename: string): void {
+    const safeName = assertSafeFileName(filename);
     const projDir = this.getProjectDir(projectName);
-    const fullPath = path.join(projDir, "cartograph", filename);
+    const cartographDir = path.join(projDir, "cartograph");
+    const fullPath = resolveInside(cartographDir, safeName);
     if (fs.existsSync(fullPath)) {
       moveToTrash(fullPath, this.brainRoot).catch((err) => {
-        console.error(`Failed to move cartograph report to trash ${filename}:`, err);
+        console.error(`Failed to move cartograph report to trash ${safeName}:`, err);
       });
     }
   }
 
   /** Moves a cartograph report from one project to another safely. */
   public moveCartographReport(sourceProject: string, targetProject: string, filename: string): void {
+    const safeName = assertSafeFileName(filename);
     const sourceDir = this.getProjectDir(sourceProject);
     const targetDir = this.getProjectDir(targetProject);
     this.ensureProject(targetProject);
 
-    const sourcePath = path.join(sourceDir, "cartograph", filename);
+    const sourceCartographDir = path.join(sourceDir, "cartograph");
+    const sourcePath = resolveInside(sourceCartographDir, safeName);
     if (!fs.existsSync(sourcePath)) return;
 
     try {
@@ -324,12 +331,12 @@ This index maps active topics and tags to their respective memory files. Update 
       // Update report projectName metadata
       report.projectName = this.sanitizeProjectName(targetProject).toLowerCase();
 
-      this.writeCartographReport(targetProject, report, filename);
+      this.writeCartographReport(targetProject, report, safeName);
       moveToTrash(sourcePath, this.brainRoot).catch((err) => {
-        console.error(`Failed to move old report to trash: ${filename}`, err);
+        console.error(`Failed to move old report to trash: ${safeName}`, err);
       });
     } catch (e) {
-      console.error(`Failed to move cartograph report ${filename} from ${sourceProject} to ${targetProject}:`, e);
+      console.error(`Failed to move cartograph report ${safeName} from ${sourceProject} to ${targetProject}:`, e);
     }
   }
 

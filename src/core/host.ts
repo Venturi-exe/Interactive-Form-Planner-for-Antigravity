@@ -23,7 +23,9 @@ export function detectHost(appName?: string): HostInfo {
         configDir = path.join(geminiDir, "antigravity");
     }
 
-    const isAntigravity = Boolean((appName && /antigravity/i.test(appName)) || fs.existsSync(geminiDir));
+    // V-02 Minimal Host Gate: Strictly rely on appName containing "antigravity".
+    // Do NOT treat standard VS Code with Gemini CLI installed as Antigravity host.
+    const isAntigravity = Boolean(appName && /antigravity/i.test(appName));
 
     return {
         isAntigravity,

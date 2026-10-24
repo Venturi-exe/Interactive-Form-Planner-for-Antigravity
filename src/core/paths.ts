@@ -1,10 +1,39 @@
 import * as path from 'path';
+import * as fs from 'fs';
 
 const WINDOWS_RESERVED = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?$/i;
 
 /**
+ * Resolves the real canonical path for an existing path or the closest existing ancestor
+ * to prevent symlink and junction directory escapes.
+ */
+function getCanonicalTarget(targetPath: string): string {
+  let curr = targetPath;
+  const suffix: string[] = [];
+  while (path.dirname(curr) !== curr) {
+    let exists = false;
+    try {
+      exists = Boolean(fs.lstatSync(curr));
+    } catch {
+      exists = false;
+    }
+    if (exists) {
+      try {
+        const real = fs.realpathSync(curr);
+        return suffix.length > 0 ? path.join(real, ...suffix) : real;
+      } catch {
+        return suffix.length > 0 ? path.join(curr, ...suffix) : curr;
+      }
+    }
+    suffix.unshift(path.basename(curr));
+    curr = path.dirname(curr);
+  }
+  return targetPath;
+}
+
+/**
  * Resolves a relative path inside a root directory, strictly preventing traversal,
- * drive escaping, Windows device names, and UNC injection.
+ * drive escaping, Windows device names, UNC injection, and symlink/junction escapes.
  */
 export function resolveInside(rootDir: string, relPath: string): string {
   if (typeof relPath !== 'string' || !relPath) {
@@ -50,6 +79,33 @@ export function resolveInside(rootDir: string, relPath: string): string {
   if (process.platform === 'win32') {
     if (!resolved.toLowerCase().startsWith(path.resolve(rootDir).toLowerCase())) {
       throw new Error(`Path escapes root directory (case-insensitive check): ${relPath}`);
+    }
+  }
+
+  // V-07: Symlink containment check using canonical realpath
+  let realRoot = path.resolve(rootDir);
+  try {
+    if (fs.existsSync(realRoot)) {
+      realRoot = fs.realpathSync(realRoot);
+    }
+  } catch { /* ignore */ }
+
+  const canonicalTarget = getCanonicalTarget(resolved);
+  const realRelative = path.relative(realRoot, canonicalTarget);
+
+  if (realRelative.startsWith('..') || path.isAbsolute(realRelative)) {
+    throw new Error(`Symlink or path escapes real root directory: ${relPath}`);
+  }
+
+  if (process.platform === 'win32') {
+    const realRootNorm = realRoot.toLowerCase().replace(/[\\/]+$/, '');
+    const realTargetNorm = canonicalTarget.toLowerCase();
+    if (
+      realTargetNorm !== realRootNorm &&
+      !realTargetNorm.startsWith(realRootNorm + '\\') &&
+      !realTargetNorm.startsWith(realRootNorm + '/')
+    ) {
+      throw new Error(`Symlink or path escapes real root directory (case-insensitive check): ${relPath}`);
     }
   }
 
@@ -106,6 +162,11 @@ export function assertSafeFileName(filename: string): string {
 
 const DENY_PATTERNS = [
   /^optic([\\/].*)?$/i,
+  /^\.trash([\\/].*)?$/i,
+  /^\.locks([\\/].*)?$/i,
+  /^\.journal([\\/].*)?$/i,
+  /^node_modules([\\/].*)?$/i,
+  /^\.git([\\/].*)?$/i,
   /^_trash([\\/].*)?$/i,
   /^_quarantine([\\/].*)?$/i,
   /^_failed([\\/].*)?$/i,
@@ -129,7 +190,7 @@ export function isDenied(relPath: string): boolean {
 export function redactPath(filePath: string): string {
   if (!filePath) return '';
   return filePath
-    .replace(/[A-Za-z]:\\[Uu]sers\\[^\\]+/g, '~')
-    .replace(/\/Users\/[^\/]+/g, '~')
-    .replace(/\/home\/[^\/]+/g, '~');
+    .replace(/[A-Za-z]:[\\/][Uu]sers[\\/][^\\/]+/g, '~')
+    .replace(/\/Users\/[^\/]+/gi, '~')
+    .replace(/\/home\/[^\/]+/gi, '~');
 }

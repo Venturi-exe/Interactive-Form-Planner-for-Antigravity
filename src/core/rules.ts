@@ -75,7 +75,10 @@ export async function removeOrbitRules(geminiMdPath: string): Promise<boolean> {
     if (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {
         const before = current.substring(0, startIndex).trimEnd();
         const after = current.substring(endIndex + ORBIT_END_MARKER.length).trimStart();
-        const updated = before && after ? `${before}\n\n${after}\n` : (before || after ? `${before || after}\n` : "");
+        let updated = before && after ? `${before}\n\n${after}\n` : (before || after ? `${before || after}\n` : "");
+        if (updated.trim() === "# Agent Instructions") {
+            updated = "";
+        }
         await writeAtomic(geminiMdPath, updated);
         return true;
     }

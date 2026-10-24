@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import path from 'path';
 import os from 'os';
+import fs from 'fs';
 import { resolveInside, assertProjectKey, assertSafeFileName, isDenied, redactPath } from '../src/core/paths';
 
 describe('core/paths', () => {
@@ -32,6 +33,22 @@ describe('core/paths', () => {
     it('rejects trailing dots and spaces in path segments', () => {
       expect(() => resolveInside(root, 'folder./file.txt')).toThrow(/Trailing dots or spaces/i);
       expect(() => resolveInside(root, 'folder /file.txt')).toThrow(/Trailing dots or spaces/i);
+    });
+    it('rejects symlink traversal outside root', () => {
+      const realTestDir = fs.mkdtempSync(path.join(os.tmpdir(), 'orbit-symlink-root-'));
+      const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'orbit-symlink-outside-'));
+      const linkPath = path.join(realTestDir, 'symlink-dir');
+      try {
+        fs.symlinkSync(outsideDir, linkPath, 'junction');
+        expect(() => resolveInside(realTestDir, 'symlink-dir/secret.txt')).toThrow(/escapes real root/i);
+      } catch (err: unknown) {
+        // If symlink creation fails due to Windows privileges, skip junction test
+        if ((err as { code?: string }).code !== 'EPERM') throw err;
+      } finally {
+        try { fs.rmSync(linkPath, { force: true }); } catch { /* ignore */ }
+        try { fs.rmSync(realTestDir, { recursive: true, force: true }); } catch { /* ignore */ }
+        try { fs.rmSync(outsideDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      }
     });
   });
 
@@ -66,6 +83,11 @@ describe('core/paths', () => {
       expect(isDenied('optic/access_policy.json')).toBe(true);
       expect(isDenied('_trash/old.txt')).toBe(true);
       expect(isDenied('_quarantine/corrupt.json')).toBe(true);
+      expect(isDenied('.trash/deleted.txt')).toBe(true);
+      expect(isDenied('.locks/brain.lock')).toBe(true);
+      expect(isDenied('.journal/migration.json')).toBe(true);
+      expect(isDenied('node_modules/pkg/index.js')).toBe(true);
+      expect(isDenied('.git/config')).toBe(true);
       expect(isDenied('.gitignore')).toBe(true);
       expect(isDenied('myproject/memories/facts.md')).toBe(false);
     });
@@ -74,7 +96,9 @@ describe('core/paths', () => {
   describe('redactPath', () => {
     it('redacts user directories to ~', () => {
       expect(redactPath('C:\\Users\\cesar\\.orbit-brain')).toBe('~\\.orbit-brain');
+      expect(redactPath('C:/Users/cesar/.orbit-brain')).toBe('~/.orbit-brain');
       expect(redactPath('/Users/cesar/.orbit-brain')).toBe('~/.orbit-brain');
+      expect(redactPath('/home/cesar/.orbit-brain')).toBe('~/.orbit-brain');
     });
   });
 });

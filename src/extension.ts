@@ -327,6 +327,12 @@ async function runFirstTimeSetup(context: vscode.ExtensionContext): Promise<void
     try {
         const host = detectHost(vscode.env.appName);
 
+        // V-02 Minimal Host Gate: Do not configure host GEMINI.md or mcp_config.json in non-Antigravity editors
+        if (!host.isAntigravity) {
+            console.log(`[Orbit Setup] Non-Antigravity editor detected (${vscode.env.appName || "unknown"}). Skipping auto-setup.`);
+            return;
+        }
+
         // 1. Stable server copy in globalStorageUri to keep server path stable across updates
         const stableDir = path.join(context.globalStorageUri.fsPath, "mcp-server");
         if (!fs.existsSync(stableDir)) {
@@ -343,7 +349,7 @@ async function runFirstTimeSetup(context: vscode.ExtensionContext): Promise<void
         if (!fs.existsSync(host.configDir)) {
             await fs.promises.mkdir(host.configDir, { recursive: true });
         }
-        const configResult = updateMcpConfig(host.mcpConfigPath, stableServerPath);
+        const configResult = await updateMcpConfig(host.mcpConfigPath, stableServerPath);
         if (!configResult.success) {
             vscode.window.showErrorMessage(`Orbit: ${configResult.error}`);
             return;

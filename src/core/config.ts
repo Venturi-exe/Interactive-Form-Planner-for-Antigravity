@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as jsonc from "jsonc-parser";
+import { writeAtomic } from "./fsx.js";
 
 export interface UpdateMcpConfigResult {
     success: boolean;
@@ -10,19 +11,19 @@ export interface UpdateMcpConfigResult {
 
 /**
  * Safely updates mcp_config.json to register the Orbit MCP server.
- * Uses jsonc-parser to preserve compatibility with JSON with comments/trailing commas.
+ * Uses jsonc-parser modify/applyEdits to preserve comments, formatting, and other servers.
  * If the existing file has syntax errors, halts immediately without modifying or overwriting.
- * If modifying an existing file, creates a backup file at <path>.orbit.bak first.
+ * If modifying an existing file, creates a backup file at <path>.orbit.bak if one does not already exist.
  */
-export function updateMcpConfig(
+export async function updateMcpConfig(
     mcpConfigPath: string,
     serverPath: string
-): UpdateMcpConfigResult {
-    let mcpConfig: any = { mcpServers: {} };
+): Promise<UpdateMcpConfigResult> {
     let backedUp = false;
+    const normalizedServerPath = serverPath.replace(/\\/g, "/");
 
     if (fs.existsSync(mcpConfigPath)) {
-        const raw = fs.readFileSync(mcpConfigPath, "utf-8");
+        let raw = fs.readFileSync(mcpConfigPath, "utf-8");
         const errors: jsonc.ParseError[] = [];
         const parsed = jsonc.parse(raw, errors, { allowTrailingComma: true });
 
@@ -36,47 +37,95 @@ export function updateMcpConfig(
             };
         }
 
-        mcpConfig = parsed;
-        if (!mcpConfig.mcpServers || typeof mcpConfig.mcpServers !== "object" || Array.isArray(mcpConfig.mcpServers)) {
-            mcpConfig.mcpServers = {};
+        // Backup existing file before modifications if backup does not already exist (V-09: preserve original)
+        const backupPath = `${mcpConfigPath}.orbit.bak`;
+        if (!fs.existsSync(backupPath)) {
+            try {
+                fs.copyFileSync(mcpConfigPath, backupPath);
+                backedUp = true;
+            } catch (err: unknown) {
+                return {
+                    success: false,
+                    error: `Failed to create backup at ${backupPath}: ${(err as Error).message}`,
+                };
+            }
         }
 
-        // Backup existing file before modifications
-        try {
-            fs.copyFileSync(mcpConfigPath, `${mcpConfigPath}.orbit.bak`);
-            backedUp = true;
-        } catch (err: any) {
-            return {
-                success: false,
-                error: `Failed to create backup at ${mcpConfigPath}.orbit.bak: ${err.message}`,
-            };
+        const formatOpts = { formattingOptions: { insertSpaces: true, tabSize: 2 } };
+
+        // Ensure mcpServers object exists
+        if (!parsed.mcpServers || typeof parsed.mcpServers !== "object" || Array.isArray(parsed.mcpServers)) {
+            const edits = jsonc.modify(raw, ["mcpServers"], {}, formatOpts);
+            raw = jsonc.applyEdits(raw, edits);
         }
+
+        // Clean up legacy server name only if it was registered for orbit / planner
+        if (parsed.mcpServers && parsed.mcpServers["antigravity-planner"]) {
+            const legacyArgs = parsed.mcpServers["antigravity-planner"]?.args;
+            const isOrbitLegacy = Array.isArray(legacyArgs) && legacyArgs.some((a: unknown) =>
+                typeof a === "string" && (a.includes("orbit") || a.includes("planner") || a.includes("mcp-server"))
+            );
+            if (isOrbitLegacy) {
+                const edits = jsonc.modify(raw, ["mcpServers", "antigravity-planner"], undefined, formatOpts);
+                raw = jsonc.applyEdits(raw, edits);
+            }
+        }
+
+        // Register or update orbit MCP server while preserving user fields (like env or disabled)
+        if (parsed.mcpServers && parsed.mcpServers["orbit"] && typeof parsed.mcpServers["orbit"] === "object") {
+            const editsCmd = jsonc.modify(raw, ["mcpServers", "orbit", "command"], "node", formatOpts);
+            raw = jsonc.applyEdits(raw, editsCmd);
+            const editsArgs = jsonc.modify(raw, ["mcpServers", "orbit", "args"], [normalizedServerPath], formatOpts);
+            raw = jsonc.applyEdits(raw, editsArgs);
+        } else {
+            const editsOrbit = jsonc.modify(
+                raw,
+                ["mcpServers", "orbit"],
+                {
+                    command: "node",
+                    args: [normalizedServerPath],
+                },
+                formatOpts
+            );
+            raw = jsonc.applyEdits(raw, editsOrbit);
+        }
+
+        const originalRaw = fs.readFileSync(mcpConfigPath, "utf-8");
+        if (raw !== originalRaw) {
+            try {
+                await writeAtomic(mcpConfigPath, raw);
+            } catch (err: unknown) {
+                return {
+                    success: false,
+                    error: `Failed to write updated configuration to ${mcpConfigPath}: ${(err as Error).message}`,
+                };
+            }
+        }
+
+        return { success: true, backedUp };
     } else {
         const dir = path.dirname(mcpConfigPath);
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
         }
-    }
 
-    // Clean up legacy server name if present
-    if (mcpConfig.mcpServers["antigravity-planner"]) {
-        delete mcpConfig.mcpServers["antigravity-planner"];
-    }
-
-    // Register or update the orbit MCP server
-    const normalizedServerPath = serverPath.replace(/\\/g, "/");
-    mcpConfig.mcpServers["orbit"] = {
-        command: "node",
-        args: [normalizedServerPath],
-    };
-
-    try {
-        fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2) + "\n", "utf-8");
-        return { success: true, backedUp };
-    } catch (err: any) {
-        return {
-            success: false,
-            error: `Failed to write updated configuration to ${mcpConfigPath}: ${err.message}`,
+        const initialConfig = {
+            mcpServers: {
+                orbit: {
+                    command: "node",
+                    args: [normalizedServerPath],
+                },
+            },
         };
+
+        try {
+            await writeAtomic(mcpConfigPath, JSON.stringify(initialConfig, null, 2) + "\n");
+            return { success: true, backedUp: false };
+        } catch (err: unknown) {
+            return {
+                success: false,
+                error: `Failed to write new configuration to ${mcpConfigPath}: ${(err as Error).message}`,
+            };
+        }
     }
 }
