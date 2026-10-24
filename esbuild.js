@@ -11,6 +11,7 @@ const commonNodeConfig = {
   target: 'node20',
   format: 'cjs',
   bundle: true,
+  mainFields: ['module', 'main'],
   minify: isProduction,
   sourcemap: !isProduction,
   define: {
