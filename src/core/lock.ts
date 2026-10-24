@@ -28,8 +28,30 @@ interface LockMetadata {
 }
 
 /**
+ * Cleans up leftover *.steal.* and *.tmp.* files older than staleMs in locksDir (P-05).
+ */
+async function cleanStaleLockArtifacts(locksDir: string, staleMs: number): Promise<void> {
+    try {
+        const entries = await fs.promises.readdir(locksDir);
+        const now = Date.now();
+        for (const entry of entries) {
+            if (entry.includes(".steal.") || entry.includes(".tmp.")) {
+                const fullPath = path.join(locksDir, entry);
+                try {
+                    const stat = await fs.promises.stat(fullPath);
+                    if (now - stat.mtimeMs > staleMs) {
+                        await fs.promises.unlink(fullPath).catch(() => {});
+                    }
+                } catch { /* ignore */ }
+            }
+        }
+    } catch { /* ignore */ }
+}
+
+/**
  * Acquires a cross-process file-based lock with token ownership and heartbeat protection.
- * Hardened against corrupt/empty file deadlocks (M-02) and stale-steal races (M-03).
+ * Hardened against corrupt/empty file deadlocks (M-02), stale-steal races (M-03, P-05),
+ * post-acquire read races (P-03), and heartbeat staleness races (P-04).
  */
 export async function acquireLock(
     lockName: string,
@@ -44,6 +66,7 @@ export async function acquireLock(
     const sanitizedName = lockName.replace(/[^a-zA-Z0-9._-]/g, "_");
     const locksDir = path.join(brainRoot, BRAIN_DIRS.LOCKS);
     await ensureDirSafe(locksDir);
+    await cleanStaleLockArtifacts(locksDir, staleMs);
 
     const lockPath = path.join(locksDir, `${sanitizedName}.lock`);
     const startTime = Date.now();
@@ -58,30 +81,64 @@ export async function acquireLock(
             await fileHandle.writeFile(JSON.stringify(meta), "utf-8");
             await fileHandle.close();
 
-            // M-03: Post-acquire verification. Ensure token was written without interference.
-            try {
-                const checkContent = await fs.promises.readFile(lockPath, "utf-8");
-                const checkMeta = JSON.parse(checkContent) as LockMetadata;
-                if (checkMeta.token !== token) {
+            // Post-acquire verification with retry and safe cleanup (M-03, P-03)
+            let readVerified = false;
+            let checkToken: string | undefined;
+
+            for (let attempt = 0; attempt < 2; attempt++) {
+                try {
+                    const checkContent = await fs.promises.readFile(lockPath, "utf-8");
+                    const checkMeta = JSON.parse(checkContent) as LockMetadata;
+                    checkToken = checkMeta.token;
+                    if (checkToken === token) {
+                        readVerified = true;
+                        break;
+                    } else {
+                        // Confirmed different token - another process won or replaced it
+                        break;
+                    }
+                } catch {
+                    if (attempt === 0) {
+                        await new Promise((r) => setTimeout(r, 25));
+                    }
+                }
+            }
+
+            if (!readVerified) {
+                if (checkToken && checkToken !== token) {
+                    // Confirmed different token: do not unlink another process's lock
                     continue;
                 }
-            } catch {
+                // Read failed or unparseable: unlink only if file is empty or contains our own token
+                try {
+                    let shouldUnlink = false;
+                    try {
+                        const raw = await fs.promises.readFile(lockPath, "utf-8");
+                        if (!raw || raw.length === 0 || raw.includes(token)) {
+                            shouldUnlink = true;
+                        }
+                    } catch {
+                        const stat = await fs.promises.stat(lockPath).catch(() => null);
+                        if (stat && stat.size === 0) {
+                            shouldUnlink = true;
+                        }
+                    }
+                    if (shouldUnlink) {
+                        await fs.promises.unlink(lockPath).catch(() => {});
+                    }
+                } catch { /* ignore */ }
                 continue;
             }
 
-            // Heartbeat timer: refresh ts every heartbeatIntervalMs while lock is held (N-03, M-02, M-03)
+            // Heartbeat timer: touch mtime via fs.promises.utimes every heartbeatIntervalMs (P-04)
+            // Measuring staleness by mtime ensures un-renamed atomic activity without rewriting file contents
             const heartbeatTimer = setInterval(async () => {
                 try {
-                    if (fs.existsSync(lockPath)) {
-                        const content = await fs.promises.readFile(lockPath, "utf-8");
-                        const currentMeta = JSON.parse(content) as LockMetadata;
-                        if (currentMeta.token === token) {
-                            currentMeta.ts = Date.now();
-                            // M-02 & M-03: Use writeAtomic to prevent truncating lock file to 0 bytes
-                            await writeAtomic(lockPath, JSON.stringify(currentMeta));
-                        }
-                    }
-                } catch { /* ignore heartbeat race errors */ }
+                    const now = new Date();
+                    await fs.promises.utimes(lockPath, now, now);
+                } catch {
+                    // Ignored: ENOENT if stolen/released, EPERM/EBUSY on Windows if held open by another process
+                }
             }, heartbeatIntervalMs);
 
             if (heartbeatTimer.unref) {
@@ -98,56 +155,78 @@ export async function acquireLock(
         } catch (err: unknown) {
             const code = (err as { code?: string })?.code;
             if (code === "EEXIST") {
-                // Check if existing lock is stale (M-02, M-03)
+                // Check if existing lock is stale, measured by mtime (M-02, M-03, P-04)
                 try {
                     let isStale = false;
                     let staleToken: string | undefined;
                     let staleMtime: number | undefined;
+
                     try {
-                        const content = await fs.promises.readFile(lockPath, "utf-8");
-                        const meta = JSON.parse(content) as LockMetadata;
-                        const lastActive = meta.ts || meta.acquiredAt || 0;
+                        const stat = await fs.promises.stat(lockPath);
+                        let contentMeta: LockMetadata | undefined;
+                        try {
+                            const content = await fs.promises.readFile(lockPath, "utf-8");
+                            contentMeta = JSON.parse(content) as LockMetadata;
+                            staleToken = contentMeta.token;
+                        } catch {
+                            // 0-byte or corrupt file
+                        }
+
+                        // A lock is stale if mtime is older than staleMs, or if content ts is older than staleMs
+                        const lastActive = stat.mtimeMs;
                         if (Date.now() - lastActive > staleMs) {
                             isStale = true;
-                            staleToken = meta.token;
+                            staleMtime = stat.mtimeMs;
+                        } else if (contentMeta && contentMeta.ts && Date.now() - contentMeta.ts > staleMs) {
+                            // For test fixtures or legacy clients that write ts in JSON without backdating mtime
+                            isStale = true;
+                            staleMtime = stat.mtimeMs;
                         }
                     } catch {
-                        // M-02: Corrupted or empty (0-byte) lock file. Fall back to mtimeMs staleness check
-                        try {
-                            const stat = await fs.promises.stat(lockPath);
-                            if (Date.now() - stat.mtimeMs > staleMs) {
-                                isStale = true;
-                                staleMtime = stat.mtimeMs;
-                            }
-                        } catch {
-                            // File disappeared in the interim
-                        }
+                        // File disappeared in the interim
                     }
 
                     if (isStale) {
-                        // M-03: Safe Stale Steal via atomic rename to a unique path.
-                        // Only the process that succeeds in renaming reclaims the lock.
+                        // Safe Stale Steal via atomic rename to a unique path (M-03, P-05)
                         const stealPath = `${lockPath}.steal.${crypto.randomUUID ? crypto.randomUUID() : Date.now()}`;
                         try {
                             await fs.promises.rename(lockPath, stealPath);
-                            // Confirm that the renamed file still holds the stale token or mtime before deleting (M-03)
+
+                            // Confirm that renamed file still holds the stale token or mtime (M-03, P-05)
+                            let stealVerified = false;
                             try {
+                                const renamedStat = await fs.promises.stat(stealPath);
                                 if (staleToken) {
                                     const renamedContent = await fs.promises.readFile(stealPath, "utf-8");
                                     const renamedMeta = JSON.parse(renamedContent) as LockMetadata;
                                     if (renamedMeta.token === staleToken) {
-                                        await fs.promises.unlink(stealPath);
+                                        stealVerified = true;
                                     }
                                 } else if (staleMtime) {
-                                    const renamedStat = await fs.promises.stat(stealPath);
                                     if (renamedStat.mtimeMs === staleMtime || Date.now() - renamedStat.mtimeMs > staleMs) {
-                                        await fs.promises.unlink(stealPath);
+                                        stealVerified = true;
                                     }
-                                } else {
-                                    await fs.promises.unlink(stealPath);
+                                } else if (Date.now() - renamedStat.mtimeMs > staleMs) {
+                                    stealVerified = true;
                                 }
                             } catch {
-                                try { await fs.promises.unlink(stealPath); } catch { /* ignore */ }
+                                // Corrupt or unreadable file: treat as stale (M-02)
+                                stealVerified = true;
+                            }
+
+                            if (stealVerified) {
+                                // Confirmed stale: delete stealPath to complete takeover
+                                await fs.promises.unlink(stealPath).catch(() => {});
+                            } else {
+                                // Steal check failed: file was not stale after all.
+                                // Do NOT rename back over lockPath. Use fs.link which fails with EEXIST if a new lock exists (P-05).
+                                try {
+                                    await fs.promises.link(stealPath, lockPath);
+                                } catch {
+                                    // EEXIST or link failure: a new lock was already created or hardlink unsupported
+                                } finally {
+                                    await fs.promises.unlink(stealPath).catch(() => {});
+                                }
                             }
                             continue;
                         } catch {

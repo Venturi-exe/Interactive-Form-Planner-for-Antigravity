@@ -217,8 +217,52 @@ describe("runUninstall and isOrbitServerEntry (N-01, N-02)", () => {
         expect(configAfter.mcpServers["antigravity-planner"]).toBeDefined();
         expect(configAfter.mcpServers["antigravity-planner"].args[0]).toBe(antigravityStorage);
 
-        // GEMINI.md was NOT touched
+        // GEMINI.md was NOT touched because Antigravity's entry remained (P-01 side B)
         expect(fs.readFileSync(mockGeminiMd, "utf-8")).toContain(ORBIT_START_MARKER);
+    });
+
+    it("uninstalling from stock VS Code removes rules from GEMINI.md if no Orbit keys remain in mcp_config.json (P-01 side A)", async () => {
+        const realExtensionDir = "vntrcorp.antigravity-interactive-form-planner-planning-tool-0.4.0";
+        const realStorageDir = "vntrcorp.antigravity-interactive-form-planner-planning-tool";
+
+        const vscodeStorage = `C:/Users/test/AppData/Roaming/Code/User/globalStorage/${realStorageDir}/mcp-server/index.js`;
+
+        // Only VS Code entry in config
+        const singleConfig = `{
+            "mcpServers": {
+                "orbit": { "command": "node", "args": ["${vscodeStorage}"] }
+            }
+        }`;
+        fs.writeFileSync(mockMcpConfig, singleConfig, "utf-8");
+        fs.writeFileSync(mockGeminiMd, `${ORBIT_START_MARKER}\nrules\n${ORBIT_END_MARKER}\n`, "utf-8");
+
+        const vscodeCaller = `C:/Users/test/.vscode/extensions/${realExtensionDir}/out`;
+        const res = await runUninstall({ callerDir: vscodeCaller });
+
+        expect(res.success).toBe(true);
+        expect(res.removedServer).toBe(true);
+        expect(res.removedRules).toBe(true);
+
+        const configAfter = JSON.parse(fs.readFileSync(mockMcpConfig, "utf-8"));
+        expect(configAfter.mcpServers.orbit).toBeUndefined();
+
+        // GEMINI.md rules were removed because this was the sole Orbit server entry
+        const geminiMdAfter = fs.readFileSync(mockGeminiMd, "utf-8");
+        expect(geminiMdAfter).not.toContain(ORBIT_START_MARKER);
+    });
+
+    it("isOrbitServerEntry fallback requires exact package name in globalStorage (P-02)", () => {
+        // Entry pointing to another extension with 'orbit' in name: must NOT match
+        const otherExtPath = "C:/Users/test/AppData/Roaming/Code/User/globalStorage/someone.orbit-tools/server/index.js";
+        expect(isOrbitServerEntry("orbit", { args: [otherExtPath] }, undefined, false)).toBe(false);
+
+        // Entry pointing to genuine extension storage for VS Code: matches when hostIsAntigravity is false
+        const genuineVsCodePath = "C:/Users/test/AppData/Roaming/Code/User/globalStorage/vntrcorp.antigravity-interactive-form-planner-planning-tool/mcp-server/index.js";
+        expect(isOrbitServerEntry("orbit", { args: [genuineVsCodePath] }, undefined, false)).toBe(true);
+
+        // Entry pointing to genuine extension storage for Antigravity: does NOT match when hostIsAntigravity is false
+        const genuineAntigravityPath = "C:/Users/test/AppData/Roaming/Antigravity/User/globalStorage/vntrcorp.antigravity-interactive-form-planner-planning-tool/mcp-server/index.js";
+        expect(isOrbitServerEntry("orbit", { args: [genuineAntigravityPath] }, undefined, false)).toBe(false);
     });
 
     it("isOrbitServerEntry strictly enforces directory boundaries without prefix collisions (M-01, M-06)", () => {

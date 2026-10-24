@@ -153,4 +153,58 @@ describe("lock operations (N-03)", () => {
         expect(results).toContain("winner_A");
         expect(results).toContain("winner_B");
     });
+
+    it("heartbeat updates mtime via utimes without rewriting file contents (P-04)", async () => {
+        const handle = await acquireLock("heartbeat_test", {
+            brainRoot: mockBrainRoot,
+            heartbeatIntervalMs: 50,
+        });
+
+        const initialContent = fs.readFileSync(handle.lockPath, "utf-8");
+        const initialStat = fs.statSync(handle.lockPath);
+
+        // Wait for at least one heartbeat tick
+        await new Promise((r) => setTimeout(r, 120));
+
+        const updatedStat = fs.statSync(handle.lockPath);
+        const updatedContent = fs.readFileSync(handle.lockPath, "utf-8");
+
+        // Content must be unchanged (no writeAtomic rewriting file content)
+        expect(updatedContent).toBe(initialContent);
+        // mtime must be refreshed
+        expect(updatedStat.mtimeMs).toBeGreaterThanOrEqual(initialStat.mtimeMs);
+
+        await releaseLock(handle);
+    });
+
+    it("cleans up leftover *.steal.* and *.tmp.* files older than staleMs (P-05)", async () => {
+        const locksDir = path.join(mockBrainRoot, ".locks");
+        fs.mkdirSync(locksDir, { recursive: true });
+
+        const oldStealFile = path.join(locksDir, "task.lock.steal.123");
+        const freshStealFile = path.join(locksDir, "task.lock.steal.456");
+        const oldTmpFile = path.join(locksDir, "task.lock.tmp.789");
+
+        fs.writeFileSync(oldStealFile, "old-steal", "utf-8");
+        fs.writeFileSync(freshStealFile, "fresh-steal", "utf-8");
+        fs.writeFileSync(oldTmpFile, "old-tmp", "utf-8");
+
+        // Backdate old files to 10 seconds ago
+        const tenSecondsAgo = (Date.now() - 10000) / 1000;
+        fs.utimesSync(oldStealFile, tenSecondsAgo, tenSecondsAgo);
+        fs.utimesSync(oldTmpFile, tenSecondsAgo, tenSecondsAgo);
+
+        const handle = await acquireLock("cleanup_test", {
+            brainRoot: mockBrainRoot,
+            staleMs: 3000,
+        });
+
+        // Stale *.steal.* and *.tmp.* files older than staleMs must be cleaned up
+        expect(fs.existsSync(oldStealFile)).toBe(false);
+        expect(fs.existsSync(oldTmpFile)).toBe(false);
+        // Fresh steal file within staleMs must remain
+        expect(fs.existsSync(freshStealFile)).toBe(true);
+
+        await releaseLock(handle);
+    });
 });

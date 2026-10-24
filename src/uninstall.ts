@@ -66,21 +66,22 @@ export function isOrbitServerEntry(
         return true;
     }
 
-    // Fallback check for standalone uninstall execution (where globalStoragePath is not injected) (M-01)
+    // Fallback check for standalone uninstall execution (where globalStoragePath is not injected) (M-01, P-02)
     if (!globalStoragePath) {
-        const lowerArg0 = arg0.toLowerCase();
-        const isMcpBundle =
-            (lowerArg0.endsWith("index.js") || lowerArg0.includes("mcp-server")) &&
-            (lowerArg0.includes("orbit") || lowerArg0.includes("antigravity-interactive-form-planner") || lowerArg0.includes("vntrcorp"));
-
-        if (isMcpBundle) {
-            const storageOwner = getStorageOwner(arg0);
-            if (hostIsAntigravity === false) {
-                // Caller is stock VS Code: only match if storage explicitly belongs to VS Code
-                return storageOwner === "vscode";
-            } else if (hostIsAntigravity === true) {
-                // Caller is Antigravity: only match if storage explicitly belongs to Antigravity
-                return storageOwner === "antigravity";
+        const segments = arg0.split(/[\\/]/).map((s) => s.toLowerCase());
+        const gsIdx = segments.lastIndexOf("globalstorage");
+        if (gsIdx !== -1 && gsIdx + 1 < segments.length) {
+            const extFolder = segments[gsIdx + 1];
+            // P-02: Require folder right after globalStorage to match the extension package ID case-insensitively
+            if (extFolder === "vntrcorp.antigravity-interactive-form-planner-planning-tool") {
+                const storageOwner = getStorageOwner(arg0);
+                if (hostIsAntigravity === false) {
+                    // Caller is stock VS Code: only match if storage explicitly belongs to VS Code
+                    return storageOwner === "vscode";
+                } else if (hostIsAntigravity === true) {
+                    // Caller is Antigravity: only match if storage explicitly belongs to Antigravity
+                    return storageOwner === "antigravity";
+                }
             }
         }
     }
@@ -102,6 +103,7 @@ export async function runUninstall(options?: UninstallOptions): Promise<Uninstal
         const mcpConfigPath = options?.mcpConfigPath || host.mcpConfigPath;
         const geminiMdPath = options?.geminiMdPath || host.geminiMdPath;
         const globalStoragePath = options?.globalStoragePath;
+        let remainingOrbitKeys = false;
 
         // 1. Remove orbit MCP server registration from mcp_config.json FIRST
         // If mcp_config.json has parse errors, abort immediately before modifying GEMINI.md
@@ -143,6 +145,14 @@ export async function runUninstall(options?: UninstallOptions): Promise<Uninstal
                     if (result.removedServer && updatedRaw !== raw) {
                         await writeAtomic(mcpConfigPath, updatedRaw);
                     }
+
+                    // P-01: Check if any orbit keys remain in mcp_config.json after removal
+                    const parsedAfter = jsonc.parse(updatedRaw, [], { allowTrailingComma: true });
+                    if (parsedAfter?.mcpServers && typeof parsedAfter.mcpServers === "object") {
+                        if ("orbit" in parsedAfter.mcpServers || "antigravity-planner" in parsedAfter.mcpServers) {
+                            remainingOrbitKeys = true;
+                        }
+                    }
                 }
             } catch (err: unknown) {
                 console.error("[Orbit Uninstall] Failed to clean mcp_config.json:", err);
@@ -152,9 +162,17 @@ export async function runUninstall(options?: UninstallOptions): Promise<Uninstal
         }
 
         // 2. Remove Orbit rules block from GEMINI.md
-        // Only remove if host is Antigravity (M-01: stock VS Code must NEVER remove GEMINI.md rules)
-        // Cleaned after mcp_config.json so parse errors in mcp_config.json do not leave GEMINI.md half-uninstalled
-        const shouldCleanRules = host.isAntigravity;
+        // - In Antigravity: always remove rules on uninstall
+        // - In non-Antigravity (e.g. stock VS Code): remove rules ONLY when both:
+        //   (a) this run removed a VS Code-owned server entry (result.removedServer === true), and
+        //   (b) no "orbit" or "antigravity-planner" key is left in mcp_config.json afterwards (P-01).
+        let shouldCleanRules = false;
+        if (host.isAntigravity) {
+            shouldCleanRules = true;
+        } else if (result.removedServer && !remainingOrbitKeys) {
+            shouldCleanRules = true;
+        }
+
         if (shouldCleanRules && fs.existsSync(geminiMdPath)) {
             try {
                 const removed = await removeOrbitRules(geminiMdPath);
