@@ -2,7 +2,7 @@
 /**
  * Orbit : Ultimate planning tool for antigravity.
  *
- * Copyright (c) 2026 César Vissouze (Venturi-exe / VNTR.CORP)
+ * Copyright (c) 2026 Venturi-exe / VNTR.CORP
  * Licensed under the Orbit Personal Use License.
  * See LICENSE.txt in the project root for license information.
  */
