@@ -124,13 +124,10 @@ export function activate(context: vscode.ExtensionContext): void {
             formViewProvider.refreshSidebarData();
         })
     );
-    // Demo command: shows a full Planner form with all field types + Execute button (V-15: dev-gated)
-    context.subscriptions.push(
-        vscode.commands.registerCommand("orbit.testPlanner", async () => {
-            if (context.extensionMode !== vscode.ExtensionMode.Development) {
-                vscode.window.showInformationMessage("Orbit: Demo commands are disabled in production builds.");
-                return;
-            }
+    // Demo commands: gated strictly to development mode (V-15, N-10)
+    if (context.extensionMode === vscode.ExtensionMode.Development) {
+        context.subscriptions.push(
+            vscode.commands.registerCommand("orbit.testPlanner", async () => {
             await vscode.commands.executeCommand("orbit.formView.focus");
             await new Promise((resolve) => setTimeout(resolve, 500));
 
@@ -191,13 +188,9 @@ export function activate(context: vscode.ExtensionContext): void {
         })
     );
 
-    // Demo command: pushes mock impact reports into the Cartograph and switches to the Cartograph tab (V-15: dev-gated)
+    // Demo command: pushes mock impact reports into the Cartograph and switches to the Cartograph tab (V-15, N-10)
     context.subscriptions.push(
         vscode.commands.registerCommand("orbit.testCartograph", async () => {
-            if (context.extensionMode !== vscode.ExtensionMode.Development) {
-                vscode.window.showInformationMessage("Orbit: Demo commands are disabled in production builds.");
-                return;
-            }
             const mockReports = [
                 {
                     taskId: "demo-ultimate-showcase",
@@ -316,6 +309,7 @@ The goal is to demonstrate all the features of the Orbit pre-execution planner a
             vscode.window.showInformationMessage("Orbit Demo: Pushed 1 comprehensive showcase report to Cartograph.");
         })
     );
+    }
 
     // Register setup, repair, and cleanup commands (P6-5 / P6-7 / N-02)
     context.subscriptions.push(
@@ -474,33 +468,35 @@ export async function runFirstTimeSetup(context: vscode.ExtensionContext, force 
 
     if (!force && context.globalState.get("setupVersion") === "9") {
         if (host.isAntigravity) {
-            // Q-02: In Antigravity, verify that configuration hasn't been stripped externally (e.g. by VS Code uninstall)
-            let needsRepair = false;
+            // Q-02, N-03: In Antigravity, verify whether MCP server configuration was stripped externally
+            let serverNeedsRepair = false;
             if (!fs.existsSync(host.mcpConfigPath)) {
-                needsRepair = true;
+                serverNeedsRepair = true;
             } else {
                 try {
                     const raw = await fs.promises.readFile(host.mcpConfigPath, "utf-8");
                     const parsed = jsonc.parse(raw);
-                    if (!parsed?.mcpServers?.orbit && !parsed?.mcpServers?.["antigravity-planner"]) {
-                        needsRepair = true;
+                    const serverEntry = parsed?.mcpServers?.orbit || parsed?.mcpServers?.["antigravity-planner"];
+                    if (!serverEntry) {
+                        serverNeedsRepair = true;
+                    } else {
+                        // N-03: Also verify that args[0] exists on disk (catches stale paths from 0.2.6)
+                        const serverScript = serverEntry.args?.[0];
+                        if (!serverScript || !fs.existsSync(serverScript)) {
+                            serverNeedsRepair = true;
+                        }
                     }
                 } catch {
-                    needsRepair = true;
+                    serverNeedsRepair = true;
                 }
             }
 
-            if (!fs.existsSync(host.geminiMdPath)) {
+            // N-03: Only repair rules if the server is also missing or needs repair.
+            // If the server entry is healthy and intact, a missing rules block in GEMINI.md
+            // is respected as a deliberate user edit and not repeatedly overwritten.
+            let needsRepair = false;
+            if (serverNeedsRepair) {
                 needsRepair = true;
-            } else {
-                try {
-                    const content = await fs.promises.readFile(host.geminiMdPath, "utf-8");
-                    if (!content.includes(ORBIT_START_MARKER) && !content.includes("<!-- ORBIT_RULES_START -->")) {
-                        needsRepair = true;
-                    }
-                } catch {
-                    needsRepair = true;
-                }
             }
 
             if (!needsRepair) {

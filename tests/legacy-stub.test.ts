@@ -25,7 +25,7 @@ describe("legacy-stub extension", () => {
         expect(fs.existsSync(extensionJsPath)).toBe(true);
         const content = fs.readFileSync(extensionJsPath, "utf-8");
         expect(content.length).toBeGreaterThan(100);
-        expect(content).toContain("orbit.legacyNoticeShown_027");
+        expect(content).toContain("orbit.legacyNoticeActionTaken_027");
         expect(content).toContain("workbench.extensions.installExtension");
         expect(content).toContain("workbench.extensions.uninstallExtension");
     });

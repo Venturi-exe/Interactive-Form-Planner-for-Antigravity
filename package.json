@@ -11,7 +11,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Venturi-exe/Interactive-Form-Planner-for-Antigravity.git"
+    "url": "https://github.com/Venturi-exe/antigravity-alignment.git"
   },
   "categories": [
     "AI",
@@ -164,13 +164,13 @@
   "scripts": {
     "typecheck": "tsc --noEmit && tsc -p tsconfig.webview.json --noEmit",
     "lint": "eslint .",
-    "test": "vitest run",
+    "test": "node esbuild.js && vitest run",
     "build-webview": "node esbuild.js",
     "compile": "node esbuild.js",
     "watch": "node esbuild.js --watch",
     "package": "npx @vscode/vsce package --no-dependencies",
     "package:all": "node scripts/package-all.mjs",
-    "vscode:prepublish": "npm run typecheck && npm run lint && npm test && node esbuild.js --production",
+    "vscode:prepublish": "node esbuild.js --production && npm run typecheck && npm run lint && npm test",
     "vscode:uninstall": "node ./out/uninstall.js"
   },
   "devDependencies": {

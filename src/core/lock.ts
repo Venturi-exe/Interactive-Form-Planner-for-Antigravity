@@ -241,15 +241,20 @@ export async function acquireLock(
                                 await fs.promises.unlink(stealPath).catch(() => {});
                             } else {
                                 // Steal check failed: file was not stale after all.
-                                // Do NOT rename back over lockPath. Use fs.link which fails with EEXIST if a new lock exists (P-05, Q-04).
+                                // Do NOT blindly rename back over lockPath. Use fs.link which fails with EEXIST if a new lock exists (P-05, Q-04).
+                                let restored = false;
+                                let alreadyReplaced = false;
+
                                 for (let attempt = 0; attempt < 2; attempt++) {
                                     try {
                                         await fs.promises.link(stealPath, lockPath);
+                                        restored = true;
                                         break;
                                     } catch (linkErr: unknown) {
                                         const linkCode = (linkErr as { code?: string })?.code;
                                         if (linkCode === "EEXIST") {
                                             // A new lock already exists; skip restore safely (P-05)
+                                            alreadyReplaced = true;
                                             break;
                                         }
                                         if (attempt === 0) {
@@ -257,7 +262,26 @@ export async function acquireLock(
                                         }
                                     }
                                 }
-                                await fs.promises.unlink(stealPath).catch(() => {});
+
+                                if (!restored && !alreadyReplaced) {
+                                    // Hardlink failed for a non-EEXIST reason (e.g. filesystem without hardlink support).
+                                    // Fallback: restore via rename if lockPath does not exist (N-08)
+                                    try {
+                                        if (!fs.existsSync(lockPath)) {
+                                            await fs.promises.rename(stealPath, lockPath);
+                                            restored = true;
+                                        } else {
+                                            alreadyReplaced = true;
+                                        }
+                                    } catch {
+                                        // Another process took over lockPath
+                                    }
+                                }
+
+                                // Only unlink stealPath if restore succeeded or another lock replaced it (N-08)
+                                if (restored || alreadyReplaced) {
+                                    await fs.promises.unlink(stealPath).catch(() => {});
+                                }
                             }
                             continue;
                         } catch {

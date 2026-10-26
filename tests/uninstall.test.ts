@@ -365,4 +365,58 @@ describe("runUninstall and isOrbitServerEntry (N-01, N-02)", () => {
         expect(res.removedRules).toBe(true);
         expect(fs.readFileSync(mockGeminiMd, "utf-8")).not.toContain(ORBIT_START_MARKER);
     });
+
+    it("aborts atomically and leaves first config intact when a second candidate config has syntax errors (N-02, Q-01)", async () => {
+        const ideConfigPath = path.join(tempDir, "antigravity-ide-atomic1.json");
+        const malformedConfigPath = path.join(tempDir, "antigravity-cli-malformed.json");
+
+        const initialIdeContent = JSON.stringify({
+            mcpServers: {
+                orbit: { command: "node", args: ["C:/Users/test/AppData/Roaming/Code/User/globalStorage/vntrcorp.orbit/mcp-server/index.js"] }
+            }
+        }, null, 2);
+
+        fs.writeFileSync(ideConfigPath, initialIdeContent, "utf-8");
+        // Second config has a syntax error
+        fs.writeFileSync(malformedConfigPath, "{ mcpServers: { broken json ...", "utf-8");
+
+        const vscodeCaller = "C:/Users/test/.vscode/extensions/vntrcorp.orbit-0.4.0/out";
+        const res = await runUninstall({
+            callerDir: vscodeCaller,
+            mcpConfigPaths: [ideConfigPath, malformedConfigPath]
+        });
+
+        expect(res.success).toBe(false);
+        expect(res.reason).toContain("Syntax errors detected in");
+        expect(res.removedServer).toBe(false);
+
+        // Crucial N-02 guarantee: first config MUST NOT have been modified on disk
+        const ideContentAfter = fs.readFileSync(ideConfigPath, "utf-8");
+        expect(ideContentAfter).toBe(initialIdeContent);
+    });
+
+    it("handles uninstall from vntrcorp.orbit-0.4.0 caller directory cleanly (N-07)", async () => {
+        const ideConfigPath = path.join(tempDir, "antigravity-ide-orbit-caller.json");
+        const orbitStorage = "C:/Users/test/AppData/Roaming/Code/User/globalStorage/vntrcorp.orbit/mcp-server/index.js";
+
+        fs.writeFileSync(ideConfigPath, JSON.stringify({
+            mcpServers: {
+                orbit: { command: "node", args: [orbitStorage] }
+            }
+        }), "utf-8");
+        fs.writeFileSync(mockGeminiMd, `${ORBIT_START_MARKER}\nrules\n${ORBIT_END_MARKER}\n`, "utf-8");
+
+        const orbitCaller = "C:/Users/test/.vscode/extensions/vntrcorp.orbit-0.4.0/out";
+        const res = await runUninstall({
+            callerDir: orbitCaller,
+            mcpConfigPaths: [ideConfigPath]
+        });
+
+        expect(res.success).toBe(true);
+        expect(res.removedServer).toBe(true);
+        expect(res.removedRules).toBe(true);
+
+        const configAfter = JSON.parse(fs.readFileSync(ideConfigPath, "utf-8"));
+        expect(configAfter.mcpServers.orbit).toBeUndefined();
+    });
 });

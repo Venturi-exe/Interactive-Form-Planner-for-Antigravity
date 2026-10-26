@@ -61,5 +61,25 @@ describe("detectHost", () => {
         // Linux/macOS paths
         expect(getStorageOwner(`/home/user/.config/Code/User/globalStorage/${realExtensionDirName}/mcp-server/index.js`)).toBe("vscode");
         expect(getStorageOwner(`/home/user/.config/Antigravity/User/globalStorage/${realExtensionDirName}/mcp-server/index.js`)).toBe("antigravity");
+
+        // vntrcorp.orbit paths (N-07)
+        expect(getStorageOwner(`C:/Users/cesar/AppData/Roaming/Code/User/globalStorage/vntrcorp.orbit/mcp-server/index.js`)).toBe("vscode");
+        expect(getStorageOwner(`C:/Users/cesar/AppData/Roaming/Antigravity/User/globalStorage/vntrcorp.orbit/mcp-server/index.js`)).toBe("antigravity");
+    });
+
+    it("verifies vntrcorp.orbit-0.4.0 extension folder identifies host environment correctly (N-07)", () => {
+        const orbitExtDir = "vntrcorp.orbit-0.4.0";
+        expect(detectHost(undefined, `C:/Users/cesar/.vscode/extensions/${orbitExtDir}/out`).isAntigravity).toBe(false);
+        expect(detectHost(undefined, `C:/Users/cesar/.antigravity/extensions/${orbitExtDir}/out`).isAntigravity).toBe(true);
+        expect(detectHost(undefined, `C:/Users/cesar/.antigravity-ide/extensions/${orbitExtDir}/out`).isAntigravity).toBe(true);
+    });
+
+    it("populates mcpConfigPaths array with existing candidate files (Q-01)", () => {
+        const host = detectHost("Antigravity");
+        expect(Array.isArray(host.mcpConfigPaths)).toBe(true);
+        expect(host.mcpConfigPaths.length).toBeGreaterThan(0);
+        for (const p of host.mcpConfigPaths) {
+            expect(p).toContain("mcp_config.json");
+        }
     });
 });

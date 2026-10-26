@@ -108,7 +108,7 @@ export async function runUninstall(options?: UninstallOptions): Promise<Uninstal
         const geminiMdPath = options?.geminiMdPath || host.geminiMdPath;
         const globalStoragePath = options?.globalStoragePath;
 
-        // Q-01: Clean VS Code-owned entries from all candidate mcp_config.json files
+        // Q-01, N-02: Clean VS Code-owned entries across all candidate mcp_config.json files
         // (e.g. ~/.gemini/antigravity-ide/mcp_config.json AND ~/.gemini/antigravity/mcp_config.json)
         const targetConfigPaths: string[] = options?.mcpConfigPaths
             ? options.mcpConfigPaths
@@ -121,8 +121,18 @@ export async function runUninstall(options?: UninstallOptions): Promise<Uninstal
         const uniqueConfigPaths = Array.from(new Set(targetConfigPaths.map((p) => path.resolve(p))));
         let remainingOrbitKeys = false;
 
-        // 1. Remove orbit MCP server registration from candidate config files FIRST
-        // If any mcp_config.json has syntax errors, abort immediately before modifying GEMINI.md
+        interface PlannedConfigEdit {
+            configPath: string;
+            originalRaw: string;
+            updatedRaw: string;
+            modified: boolean;
+            remainingOrbitKeys: boolean;
+        }
+
+        const plannedEdits: PlannedConfigEdit[] = [];
+
+        // Phase 1 (N-02): Parse and validate EVERY candidate config in-memory first.
+        // If any candidate file has syntax errors, abort immediately before modifying any file on disk.
         for (const configPath of uniqueConfigPaths) {
             if (fs.existsSync(configPath)) {
                 try {
@@ -130,7 +140,7 @@ export async function runUninstall(options?: UninstallOptions): Promise<Uninstal
                     const errors: jsonc.ParseError[] = [];
                     const config = jsonc.parse(raw, errors, { allowTrailingComma: true });
 
-                    // V-03: If mcp_config.json has parse errors, abort immediately to protect user configuration
+                    // V-03, N-02: If ANY mcp_config.json has parse errors, abort immediately to protect user configuration
                     if (errors.length > 0 || config === undefined || typeof config !== "object" || config === null) {
                         const msg = `[Orbit Uninstall] Syntax errors detected in ${configPath}. Aborting MCP server cleanup to avoid corrupting user configuration.`;
                         console.error(msg);
@@ -138,44 +148,56 @@ export async function runUninstall(options?: UninstallOptions): Promise<Uninstal
                         return result;
                     }
 
+                    let updatedRaw = raw;
+                    let modified = false;
+                    let fileRemainingOrbitKeys = false;
+
                     if (config.mcpServers && typeof config.mcpServers === "object") {
-                        let updatedRaw = raw;
                         const formatOpts = { formattingOptions: { insertSpaces: true, tabSize: 2 } };
-                        let backedUp = false;
 
                         // Only candidates are "orbit" and "antigravity-planner" (N-01)
                         for (const key of ["orbit", "antigravity-planner"]) {
                             const entry = config.mcpServers[key];
                             if (entry && isOrbitServerEntry(key, entry, globalStoragePath, host.isAntigravity)) {
-                                // Backup before modifying using rolling backup (N-01: keep last 3)
-                                if (!backedUp) {
-                                    await createRollingBackup(configPath, 3);
-                                    backedUp = true;
-                                }
-
                                 const edits = jsonc.modify(updatedRaw, ["mcpServers", key], undefined, formatOpts);
                                 updatedRaw = jsonc.applyEdits(updatedRaw, edits);
-                                result.removedServer = true;
+                                modified = true;
                             }
-                        }
-
-                        if (result.removedServer && updatedRaw !== raw) {
-                            await writeAtomic(configPath, updatedRaw);
                         }
 
                         // Check if any orbit keys remain in this config file after removal (P-01, Q-01)
                         const parsedAfter = jsonc.parse(updatedRaw, [], { allowTrailingComma: true });
                         if (parsedAfter?.mcpServers && typeof parsedAfter.mcpServers === "object") {
                             if ("orbit" in parsedAfter.mcpServers || "antigravity-planner" in parsedAfter.mcpServers) {
-                                remainingOrbitKeys = true;
+                                fileRemainingOrbitKeys = true;
                             }
                         }
                     }
+
+                    plannedEdits.push({
+                        configPath,
+                        originalRaw: raw,
+                        updatedRaw,
+                        modified,
+                        remainingOrbitKeys: fileRemainingOrbitKeys,
+                    });
                 } catch (err: unknown) {
-                    console.error(`[Orbit Uninstall] Failed to clean ${configPath}:`, err);
+                    console.error(`[Orbit Uninstall] Failed to parse ${configPath}:`, err);
                     result.reason = (err as Error).message;
                     return result;
                 }
+            }
+        }
+
+        // Phase 2 (N-02): Only write to disk once all candidate files have been validated
+        for (const plan of plannedEdits) {
+            if (plan.modified && plan.updatedRaw !== plan.originalRaw) {
+                await createRollingBackup(plan.configPath, 3);
+                await writeAtomic(plan.configPath, plan.updatedRaw);
+                result.removedServer = true;
+            }
+            if (plan.remainingOrbitKeys) {
+                remainingOrbitKeys = true;
             }
         }
 

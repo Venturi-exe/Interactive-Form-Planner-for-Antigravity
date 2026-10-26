@@ -240,4 +240,37 @@ describe("lock operations (N-03)", () => {
         readFileSpy.mockRestore();
         await releaseLock(handle);
     });
+
+    it("cleans up steal files based on embedded creation timestamp in filename (Q-03)", async () => {
+        const locksDir = path.join(mockBrainRoot, ".locks");
+        fs.mkdirSync(locksDir, { recursive: true });
+
+        const now = Date.now();
+        const oldTs = now - 25000;
+        const freshTs = now;
+
+        const oldStealFile = path.join(locksDir, `task.lock.steal.${oldTs}.abc12345`);
+        const freshStealFile = path.join(locksDir, `task.lock.steal.${freshTs}.xyz67890`);
+
+        fs.writeFileSync(oldStealFile, "old", "utf-8");
+        fs.writeFileSync(freshStealFile, "fresh", "utf-8");
+
+        // Force both files' filesystem mtimes to NOW
+        const nowSec = now / 1000;
+        fs.utimesSync(oldStealFile, nowSec, nowSec);
+        fs.utimesSync(freshStealFile, nowSec, nowSec);
+
+        const handle = await acquireLock("steal_ts_test", {
+            brainRoot: mockBrainRoot,
+            staleMs: 5000,
+        });
+
+        // The old file must be cleaned up based on its embedded timestamp (25s ago > 5s staleMs)
+        // even though its mtime was just set to now
+        expect(fs.existsSync(oldStealFile)).toBe(false);
+        // The fresh file must remain intact
+        expect(fs.existsSync(freshStealFile)).toBe(true);
+
+        await releaseLock(handle);
+    });
 });
