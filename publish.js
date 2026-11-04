@@ -25,8 +25,14 @@ function logStep(stepNum, description) {
   console.log(`\n[publish] [Step ${stepNum}/7] ${description}...`);
 }
 
+function quoteShellArg(arg) {
+  const str = String(arg);
+  return /\s/.test(str) && !/^".*"$/.test(str) ? `"${str.replace(/"/g, '\\"')}"` : str;
+}
+
 function runCommand(command, args, options = {}) {
-  const displayArgs = args.map(arg => {
+  const shellArgs = args.map(quoteShellArg);
+  const displayArgs = shellArgs.map(arg => {
     if (process.env.OVSX_PAT && arg.includes(process.env.OVSX_PAT)) {
       return arg.replace(process.env.OVSX_PAT, '***');
     }
@@ -34,7 +40,7 @@ function runCommand(command, args, options = {}) {
   });
   console.log(`> ${command} ${displayArgs.join(' ')}`);
 
-  const result = spawnSync(command, args, {
+  const result = spawnSync(command, shellArgs, {
     stdio: 'inherit',
     shell: true,
     cwd: __dirname,
@@ -97,7 +103,11 @@ if (!pat) {
 }
 
 // Check if version already exists on Open VSX
-const checkRes = spawnSync('npx', ['ovsx', 'get', `${pkg.publisher}.${packageName}`, '--extensionVersion', version], { encoding: 'utf8' });
+const checkRes = spawnSync('npx', ['ovsx', 'get', `${pkg.publisher}.${packageName}`, '--metadata', '-v', version], {
+  encoding: 'utf8',
+  shell: true,
+  cwd: __dirname,
+});
 if (checkRes.status === 0) {
   console.log(`[publish] Version ${version} already published to Open VSX. Skipping upload.`);
   process.exit(0);
