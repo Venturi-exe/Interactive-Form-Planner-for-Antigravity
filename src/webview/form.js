@@ -2,7 +2,7 @@
 /**
  * Orbit : Ultimate planning tool for antigravity.
  *
- * Copyright (c) 2026 Venturi-exe / VNTR.CORP
+ * Copyright (c) 2026 Venturi-exe / VNTRCORP
  * Licensed under the Orbit Personal Use License.
  * See LICENSE.txt in the project root for license information.
  */
@@ -112,11 +112,27 @@
         } else if (message.type === "reset_form") {
             stopInactivityTimer();
             currentRequestId = null;
+            const bannerEl = document.getElementById("agent-disconnect-banner");
+            if (bannerEl) {
+                bannerEl.classList.remove("visible");
+                bannerEl.textContent = "";
+            }
             formContent.style.display = "none";
             emptyState.style.display = "flex";
         } else if (message.type === "reset_timer") {
             if (currentRequestId) {
                 startInactivityTimer();
+            }
+        } else if (message.type === "agent_connection_status") {
+            const bannerEl = document.getElementById("agent-disconnect-banner");
+            if (bannerEl) {
+                if (message.connected === false && currentRequestId && message.requestId === currentRequestId) {
+                    bannerEl.textContent = "Agent paused polling. Your typed input is preserved and will submit safely.";
+                    bannerEl.classList.add("visible");
+                } else {
+                    bannerEl.classList.remove("visible");
+                    bannerEl.textContent = "";
+                }
             }
         }
     });
@@ -128,6 +144,12 @@
         emptyState.style.display = "none";
         formContent.style.display = "block";
         formContent.innerHTML = "";
+
+        const bannerEl = document.getElementById("agent-disconnect-banner");
+        if (bannerEl) {
+            bannerEl.classList.remove("visible");
+            bannerEl.textContent = "";
+        }
 
         // Header
         const header = document.createElement("div");
@@ -773,10 +795,23 @@
         }
     }
 
+    let lastInteractionResetPost = 0;
+
     function resetInactivityTimer() {
-        if (currentRequestId) {
+        if (!currentRequestId) return;
+        timeRemainingSec = inactivityTimeoutMin * 60;
+        const warningEl = document.getElementById("timeout-warning");
+        if (warningEl && warningEl.classList.contains("visible")) {
+            warningEl.classList.remove("visible");
+            warningEl.textContent = "";
+        }
+        if (!warningTimer) {
             startInactivityTimer();
-            vscode.postMessage({ type: "interaction_reset" });
+        }
+        const now = Date.now();
+        if (now - lastInteractionResetPost >= 1000) {
+            lastInteractionResetPost = now;
+            vscode.postMessage({ type: "interaction_reset", requestId: currentRequestId });
         }
     }
 

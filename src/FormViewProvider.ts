@@ -1,7 +1,7 @@
 /**
  * Orbit : Ultimate planning tool for antigravity.
  *
- * Copyright (c) 2026 Venturi-exe / VNTR.CORP
+ * Copyright (c) 2026 Venturi-exe / VNTRCORP
  * Licensed under the Orbit Personal Use License.
  * See LICENSE.txt in the project root for license information.
  */
@@ -29,6 +29,8 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
     private _activeRequest?: AlignmentFormRequest;
     private _sessionReports: any[] = [];
     private _pendingSelectTaskId?: string;
+    private _agentConnectionStatus: { requestId: string; connected: boolean } | null = null;
+    private _activityCallbacks: Array<(requestId: string, timeoutMs: number) => void> = [];
 
     private static _configChangeCallbacks: Array<() => void> = [];
 
@@ -44,6 +46,26 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
 
     public get activeTab(): "planner" | "cartograph" {
         return this._activeTab;
+    }
+
+    public getInactivityTimeoutMs(): number {
+        const settings = this._context.globalState.get<any>("orbit.settings", {});
+        const config = vscode.workspace.getConfiguration("orbit");
+        const minutes = settings.inactivityTimeout ?? config.get<number>("inactivityTimeout", 5);
+        return Math.max(1, minutes) * 60 * 1000;
+    }
+
+    public onUserActivity(callback: (requestId: string, timeoutMs: number) => void): void {
+        this._activityCallbacks.push(callback);
+    }
+
+    public setAgentConnectionStatus(requestId: string, connected: boolean): void {
+        this._agentConnectionStatus = { requestId, connected };
+        const msg = { type: "agent_connection_status", requestId, connected };
+        this._view?.webview.postMessage(msg);
+        for (const { panel } of this._panels) {
+            panel.webview.postMessage(msg);
+        }
     }
 
     /**
@@ -140,6 +162,14 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
                 if (!sourcePanel) {
                     targetWebview?.postMessage({ type: "switch_tab", tab: "planner" });
                 }
+
+                if (this._agentConnectionStatus && this._agentConnectionStatus.requestId === this._activeRequest.requestId) {
+                    targetWebview?.postMessage({
+                        type: "agent_connection_status",
+                        requestId: this._agentConnectionStatus.requestId,
+                        connected: this._agentConnectionStatus.connected,
+                    });
+                }
             }
             return;
         }
@@ -182,10 +212,17 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
         }
 
         if (message.type === "interaction_reset") {
+            if (this._activeRequest && message.requestId && message.requestId !== this._activeRequest.requestId) {
+                return;
+            }
             const resetMsg = { type: "reset_timer" };
             this._view?.webview.postMessage(resetMsg);
             for (const { panel } of this._panels) {
                 panel.webview.postMessage(resetMsg);
+            }
+            if (this._activeRequest) {
+                const timeoutMs = this.getInactivityTimeoutMs();
+                this._activityCallbacks.forEach((cb) => cb(this._activeRequest!.requestId, timeoutMs));
             }
             return;
         }
@@ -214,6 +251,14 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
         }
 
         if (!this._pendingResolver) return;
+
+        // Message correlation: Validate requestId matches active request
+        if (this._activeRequest && message.requestId && message.requestId !== this._activeRequest.requestId) {
+            console.warn(`[FormViewProvider] Ignored ${message.type} with mismatched requestId: expected ${this._activeRequest.requestId}, got ${message.requestId}`);
+            return;
+        }
+
+        this._agentConnectionStatus = null;
         
         if (message.type === "form_timeout") {
             this._pendingResolver({ action: "timeout", dismissed: true, data: {} });
@@ -225,6 +270,8 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
                 dismissed: false,
                 data: {},
                 clarificationRequest: message.question,
+                specificClarifications: message.specificClarifications,
+                partialAnswers: message.partialAnswers,
             });
             this._pendingResolver = undefined;
             this._broadcastDismiss();
@@ -653,6 +700,7 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
     </div>
 
     <div id="timeout-warning"></div>
+    <div id="agent-disconnect-banner"></div>
 
     <div id="tab-planner" class="${tabPlannerClass}">
         <div id="form-container">
@@ -990,6 +1038,14 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
                     panel.webview.postMessage({ type: "history_cleared" });
                     vscode.window.showInformationMessage("Orbit impact history and backups cleared successfully.");
                 }
+            } else if (message.type === "run_setup") {
+                vscode.commands.executeCommand("orbit.setup");
+            } else if (message.type === "view_spec") {
+                vscode.commands.executeCommand("orbit.showSpecification");
+            } else if (message.type === "copy_rules") {
+                vscode.commands.executeCommand("orbit.copySnippet");
+            } else if (message.type === "remove_integration") {
+                vscode.commands.executeCommand("orbit.removeIntegration");
             }
         });
     }
@@ -1013,6 +1069,16 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
         const quotaCriticalThreshold = settings.quotaCriticalThreshold ?? 20;
         const quotaGaugeStyle = settings.quotaGaugeStyle ?? "circular-segmented";
         const quotaHistoryRangeDays = settings.quotaHistoryRangeDays ?? 7;
+
+        const geminiMode = context.globalState.get<string>("orbit.geminiIntegrationMode", "not-configured");
+        const modeLabels: Record<string, string> = {
+            appended: "Appended (Within Markers)",
+            replaced: "Replaced (Orbit Only)",
+            manual: "Manual (Custom / Modular Prompt)",
+            skipped: "Skipped / Pending",
+            "not-configured": "Not Configured"
+        };
+        const currentModeLabel = modeLabels[geminiMode] || "Custom";
 
         return `<!DOCTYPE html>
 <html lang="en">
@@ -1157,6 +1223,34 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
                 </div>
             </div>
         </div>
+
+        <div class="settings-section">
+            <h2 class="section-title">Setup, Integration & Lifecycle</h2>
+            <div class="setting-item">
+                <div class="setting-info">
+                    <label class="setting-label">Assistant Guidelines Integration</label>
+                    <span class="setting-description">Current mode of assistant instructions in ~/.gemini/GEMINI.md</span>
+                </div>
+                <div class="setting-control">
+                    <span class="slider-value-display" style="font-weight: 600; min-width: auto; text-align: right;">${currentModeLabel}</span>
+                </div>
+            </div>
+
+            <div class="setting-item">
+                <div class="setting-info">
+                    <label class="setting-label">Actions & Configuration</label>
+                    <span class="setting-description">Re-run guided setup, view technical specification for custom prompts, or manage integration.</span>
+                </div>
+                <div class="setting-control">
+                    <div class="btn-group">
+                        <button id="btn-run-setup" class="action-btn-primary">Run Setup Wizard</button>
+                        <button id="btn-view-spec" class="action-btn-secondary">View Specification</button>
+                        <button id="btn-copy-rules" class="action-btn-secondary">Copy Rules</button>
+                        <button id="btn-remove-integration" class="action-btn-danger">Remove Integration</button>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script nonce="${nonce}">
@@ -1244,6 +1338,19 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
                 clearBtn.disabled = true;
                 clearBtn.textContent = "History Purged";
             }
+        });
+
+        document.getElementById("btn-run-setup")?.addEventListener("click", () => {
+            vscode.postMessage({ type: "run_setup" });
+        });
+        document.getElementById("btn-view-spec")?.addEventListener("click", () => {
+            vscode.postMessage({ type: "view_spec" });
+        });
+        document.getElementById("btn-copy-rules")?.addEventListener("click", () => {
+            vscode.postMessage({ type: "copy_rules" });
+        });
+        document.getElementById("btn-remove-integration")?.addEventListener("click", () => {
+            vscode.postMessage({ type: "remove_integration" });
         });
     </script>
 </body>

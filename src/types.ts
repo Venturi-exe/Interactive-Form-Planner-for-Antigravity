@@ -1,10 +1,15 @@
 /**
  * Orbit : Ultimate planning tool for antigravity.
  *
- * Copyright (c) 2026 Venturi-exe / VNTR.CORP
+ * Copyright (c) 2026 Venturi-exe / VNTRCORP
  * Licensed under the Orbit Personal Use License.
  * See LICENSE.txt in the project root for license information.
  */
+
+/**
+ * Producer origin indicating which client generated the request.
+ */
+export type PlannerProducerOrigin = "antigravity" | "france_student" | "unknown";
 
 /**
  * Field types supported by the alignment form.
@@ -33,12 +38,18 @@ export interface AlignmentFormRequest {
     description?: string;
     fields: AlignmentField[];
     showExecuteButton?: boolean;
+    origin?: PlannerProducerOrigin;
 }
 
 /**
  * The action the user took on the form.
  */
 export type FormAction = "submit" | "execute" | "dismiss" | "clarification" | "timeout";
+
+/**
+ * MCP tool action union (including non-terminal "pending" slice continuation).
+ */
+export type PlannerToolAction = FormAction | "pending";
 
 /**
  * The result returned by the FormViewProvider after user interaction.
@@ -63,6 +74,38 @@ export interface AlignmentFormResponse {
     clarificationRequest?: string;
     specificClarifications?: Array<{ fieldId: string; question: string; clarificationQuery: string }>;
     partialAnswers?: Record<string, unknown>;
+    message?: string;
+    completedAt?: number;
+    origin?: PlannerProducerOrigin;
+}
+
+/**
+ * Durable response retained immutably in responses/{requestId}.json for idempotent recovery.
+ */
+export interface DurablePlannerResponse extends AlignmentFormResponse {
+    completedAt: number;
+    origin: PlannerProducerOrigin;
+}
+
+/**
+ * UI interaction heartbeat written to events/{requestId}.ui.json.
+ */
+export interface PlannerUiHeartbeat {
+    requestId: string;
+    origin: PlannerProducerOrigin;
+    claimedAt: number;
+    lastUserActivityAt: number;
+    inactivityTimeoutMs: number;
+}
+
+/**
+ * Agent polling heartbeat written to events/{requestId}.agent.json.
+ */
+export interface PlannerAgentHeartbeat {
+    requestId: string;
+    origin: PlannerProducerOrigin;
+    lastPollAt: number;
+    state: "polling" | "between_slices" | "aborted";
 }
 
 /**
@@ -121,5 +164,3 @@ export interface ImpactReport {
     tags?: string[];
     filename?: string;
 }
-
-

@@ -79,11 +79,12 @@ export const PlannerRequestSchema = z.object({
     description: z.string().default(""),
     showExecuteButton: z.boolean().optional().default(false),
     fields: z.array(PlannerFieldSchema).min(1),
+    origin: z.enum(["antigravity", "france_student", "unknown"]).optional().default("antigravity"),
 });
 export type PlannerRequest = z.infer<typeof PlannerRequestSchema>;
 
 // Planner Response back to Agent
-export const PlannerResponseActionSchema = z.enum(["submit", "execute", "skip", "timeout", "clarification"]);
+export const PlannerResponseActionSchema = z.enum(["submit", "execute", "dismiss", "skip", "timeout", "clarification"]);
 export type PlannerResponseAction = z.infer<typeof PlannerResponseActionSchema>;
 
 export const PlannerResponseSchema = z.object({
@@ -92,8 +93,24 @@ export const PlannerResponseSchema = z.object({
     data: z.record(z.any()).optional().default({}),
     dismissed: z.boolean().optional().default(false),
     clarificationRequest: z.string().optional(),
+    specificClarifications: z.array(z.object({
+        fieldId: z.string(),
+        question: z.string(),
+        clarificationQuery: z.string(),
+    })).optional(),
+    partialAnswers: z.record(z.any()).optional(),
+    completedAt: z.number().optional(),
+    origin: z.enum(["antigravity", "france_student", "unknown"]).optional(),
 });
 export type PlannerResponse = z.infer<typeof PlannerResponseSchema>;
+
+// Clarification Item Schema
+export const ClarificationItemSchema = z.object({
+    fieldId: z.string(),
+    question: z.string(),
+    clarificationQuery: z.string(),
+});
+export type ClarificationItem = z.infer<typeof ClarificationItemSchema>;
 
 // Form Webview Incoming Message Schema
 export const FormWebviewMessageSchema = z.discriminatedUnion("type", [
@@ -108,23 +125,31 @@ export const FormWebviewMessageSchema = z.discriminatedUnion("type", [
         sessionId: z.string().optional(),
         projectName: z.string().optional(),
     }),
-    z.object({ type: z.literal("interaction_reset") }),
+    z.object({ type: z.literal("interaction_reset"), requestId: z.string().optional() }),
     z.object({ type: z.literal("open_file"), filePath: z.string(), projectName: z.string().optional() }),
     z.object({ type: z.literal("open_receipt"), projectName: z.string().optional(), taskId: z.string() }),
     z.object({ type: z.literal("open_walkthrough"), projectName: z.string().optional(), taskId: z.string() }),
-    z.object({ type: z.literal("form_timeout") }),
-    z.object({ type: z.literal("form_clarification"), question: z.string().optional() }),
+    z.object({ type: z.literal("form_timeout"), requestId: z.string().optional() }),
+    z.object({
+        type: z.literal("form_clarification"),
+        requestId: z.string().optional(),
+        question: z.string().optional(),
+        specificClarifications: z.array(ClarificationItemSchema).optional().default([]),
+        partialAnswers: z.record(z.any()).optional().default({}),
+    }),
     z.object({
         type: z.literal("form_submitted"),
+        requestId: z.string().optional(),
         action: z.enum(["submit", "execute", "clarification", "timeout", "dismiss"]).optional(),
         data: z.record(z.any()).optional().default({}),
         clarificationRequest: z.string().optional(),
     }),
     z.object({
         type: z.literal("form_executed"),
+        requestId: z.string().optional(),
         data: z.record(z.any()).optional().default({}),
     }),
-    z.object({ type: z.literal("form_dismissed") }),
+    z.object({ type: z.literal("form_dismissed"), requestId: z.string().optional() }),
 ]);
 export type FormWebviewMessage = z.infer<typeof FormWebviewMessageSchema>;
 

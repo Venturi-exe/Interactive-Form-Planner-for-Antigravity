@@ -1,7 +1,7 @@
 /**
  * Orbit : Ultimate planning tool for antigravity.
  *
- * Copyright (c) 2026 Venturi-exe / VNTR.CORP
+ * Copyright (c) 2026 Venturi-exe / VNTRCORP
  * Licensed under the Orbit Personal Use License.
  * See LICENSE.txt in the project root for license information.
  */
@@ -13,9 +13,15 @@ import * as fs from "fs";
 import * as path from "path";
 import * as crypto from "crypto";
 import { getBrainRoot, getIpcRoot, IPC_DIRS } from "../core/constants.js";
-import { resolveInside, assertProjectKey, assertSafeFileName, isDenied, redactPath } from "../core/paths.js";
+import { resolveInside, assertProjectKey, assertSafeFileName, isDenied, redactPath, getProjectDir } from "../core/paths.js";
 import { writeAtomic, writeJsonAtomic, readJsonSafe, ensureDirSafe } from "../core/fsx.js";
 import { moveToTrash } from "../core/trash.js";
+import {
+    getIpcDirs as getPlannerIpcDirs,
+    ensureAllIpcDirs,
+    pollForResponseSlice,
+    pruneExpiredIpcFiles,
+} from "../core/plannerIpc.js";
 
 declare const __ORBIT_VERSION__: string | undefined;
 
@@ -25,26 +31,19 @@ const server = new McpServer({
 });
 
 function getIpcDirs() {
-    const ipcRoot = getIpcRoot();
-    return {
-        ipcRoot,
-        requests: path.join(ipcRoot, IPC_DIRS.REQUESTS),
-        claimed: path.join(ipcRoot, IPC_DIRS.CLAIMED),
-        cancelled: path.join(ipcRoot, IPC_DIRS.CANCELLED),
-        responses: path.join(ipcRoot, IPC_DIRS.RESPONSES),
-        failed: path.join(ipcRoot, IPC_DIRS.FAILED),
-        impacts: path.join(ipcRoot, IPC_DIRS.IMPACTS),
-    };
+    return getPlannerIpcDirs(getIpcRoot());
 }
 
 async function ensureIpcDirs(): Promise<void> {
-    const dirs = getIpcDirs();
-    await ensureDirSafe(dirs.requests);
-    await ensureDirSafe(dirs.claimed);
-    await ensureDirSafe(dirs.cancelled);
-    await ensureDirSafe(dirs.responses);
-    await ensureDirSafe(dirs.failed);
-    await ensureDirSafe(dirs.impacts);
+    await ensureAllIpcDirs(getIpcRoot());
+}
+
+// Background periodic pruning of expired IPC files (>30m TTL) every 5 minutes
+const pruneInterval = setInterval(() => {
+    pruneExpiredIpcFiles(getIpcRoot()).catch(() => {});
+}, 5 * 60 * 1000);
+if (typeof pruneInterval.unref === "function") {
+    pruneInterval.unref();
 }
 
 const fieldSchema = z.object({
@@ -65,119 +64,107 @@ function generateRequestId(): string {
     return `align_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
 }
 
-/**
- * Polls the responses directory asynchronously until a response file appears.
- * Returns the parsed response data. Cleans up IPC files.
- */
-async function pollForResponse(requestId: string, timeoutMs: number): Promise<Record<string, unknown>> {
-    const dirs = getIpcDirs();
-    const responseFile = path.join(dirs.responses, `${requestId}.json`);
-    const requestFile = path.join(dirs.requests, `${requestId}.json`);
-    const claimedFile = path.join(dirs.claimed, `${requestId}.json`);
-    const cancelledFile = path.join(dirs.cancelled, `${requestId}.json`);
-    const failedFile = path.join(dirs.failed, `${requestId}.json`);
-    const pollInterval = 500;
-    const startTime = Date.now();
-
-    while (Date.now() - startTime <= timeoutMs) {
-        // 1. Check for normal response
-        if (fs.existsSync(responseFile)) {
-            try {
-                const data = await readJsonSafe<Record<string, unknown>>(responseFile);
-                try { await fs.promises.unlink(responseFile); } catch { /* ok */ }
-                try { await fs.promises.unlink(requestFile); } catch { /* ok */ }
-                try { await fs.promises.unlink(claimedFile); } catch { /* ok */ }
-                return data;
-            } catch (err) {
-                try { await fs.promises.unlink(responseFile); } catch { /* ok */ }
-                throw err;
-            }
-        }
-
-        // 2. Check for failure marker
-        if (fs.existsSync(failedFile)) {
-            try {
-                const failData = await readJsonSafe<{ error?: string }>(failedFile);
-                try { await fs.promises.unlink(failedFile); } catch { /* ok */ }
-                try { await fs.promises.unlink(requestFile); } catch { /* ok */ }
-                try { await fs.promises.unlink(claimedFile); } catch { /* ok */ }
-                throw new Error(failData.error || "IPC processing failed in extension");
-            } catch (err) {
-                try { await fs.promises.unlink(failedFile); } catch { /* ok */ }
-                throw err;
-            }
-        }
-
-        // 3. Check for cancellation marker
-        if (fs.existsSync(cancelledFile)) {
-            try { await fs.promises.unlink(cancelledFile); } catch { /* ok */ }
-            try { await fs.promises.unlink(requestFile); } catch { /* ok */ }
-            try { await fs.promises.unlink(claimedFile); } catch { /* ok */ }
-            return { action: "timeout", dismissed: true, message: "Planning was cancelled." };
-        }
-
-        await new Promise((resolve) => setTimeout(resolve, pollInterval));
-    }
-
-    try { await fs.promises.unlink(requestFile); } catch { /* ok */ }
-    try { await fs.promises.unlink(claimedFile); } catch { /* ok */ }
-    throw new Error("Form timed out after 5 minutes without a response.");
-}
-
 server.tool(
     "orbit_planner",
-    "Submit this form before writing or modifying any file OR generating complex text-only output (e.g., blog posts, documentation, structured plans) when: a new feature or page is being built, an existing file is being changed, the task is ambiguous or missing detail, you have a better approach to suggest, the change has side effects on other parts of the project, or multiple valid approaches exist. Do not call this tool if the task is fully specified, unambiguous, has no better alternative, and has no side effects on other files.",
+    "Submit this form before writing or modifying any file OR generating complex text-only output (e.g., blog posts, documentation, structured plans) when: a new feature or page is being built, an existing file is being changed, the task is ambiguous or missing detail, you have a better approach to suggest, the change has side effects on other parts of the project, or multiple valid approaches exist. If a previous call returned action: 'pending', provide resumeRequestId to continue waiting without creating a new form.",
     {
-        title: z.string().describe("What decision needs alignment"),
+        resumeRequestId: z
+            .string()
+            .optional()
+            .describe("Request ID of an active planner form to resume polling after a pending slice."),
+        title: z.string().optional().describe("What decision needs alignment (required for new requests)"),
         description: z.string().optional().describe("Why the agent is asking"),
-        fields: z.array(fieldSchema).max(5).describe("Form fields, 5 maximum"),
+        fields: z.array(fieldSchema).max(5).optional().describe("Form fields, 5 maximum (required for new requests)"),
         showExecuteButton: z.boolean().optional().default(false).describe("Show an 'Execute Plan' button. Use only during deep prompt refining loops."),
     },
-    async ({ title, description, fields, showExecuteButton }) => {
+    async ({ resumeRequestId, title, description, fields, showExecuteButton }, extra) => {
         try {
             await ensureIpcDirs();
             const dirs = getIpcDirs();
+            const ipcRoot = getIpcRoot();
 
-            const requestId = generateRequestId();
-            const finalFields = [...fields];
-            if (!finalFields.some((f) => f.id === "anything_else")) {
-                finalFields.push({
-                    id: "anything_else",
-                    label: "Anything else to consider?",
-                    type: "free-text",
-                    required: false,
-                    placeholder: "Type any other details, requirements, or constraints here...",
-                });
+            // Background prune of expired IPC files (>30m TTL)
+            pruneExpiredIpcFiles(ipcRoot).catch(() => {});
+
+            let requestId: string;
+
+            if (resumeRequestId) {
+                assertSafeFileName(resumeRequestId);
+                requestId = resumeRequestId;
+
+                // Verify the request exists in claimed, responses, or requests
+                const requestFile = path.join(dirs.requests, `${requestId}.json`);
+                const claimedFile = path.join(dirs.claimed, `${requestId}.json`);
+                const responseFile = path.join(dirs.responses, `${requestId}.json`);
+
+                if (!fs.existsSync(requestFile) && !fs.existsSync(claimedFile) && !fs.existsSync(responseFile)) {
+                    return {
+                        content: [
+                            {
+                                type: "text" as const,
+                                text: JSON.stringify(
+                                    {
+                                        action: "timeout",
+                                        requestId,
+                                        dismissed: true,
+                                        message: `Planner session ${requestId} was not found or has expired. Please submit a new planner request.`,
+                                    },
+                                    null,
+                                    2
+                                ),
+                            },
+                        ],
+                    };
+                }
+            } else {
+                if (!title || !fields) {
+                    throw new Error("Parameters 'title' and 'fields' are required when creating a new planner form.");
+                }
+                requestId = generateRequestId();
+                const finalFields = [...fields];
+                if (!finalFields.some((f) => f.id === "anything_else")) {
+                    finalFields.push({
+                        id: "anything_else",
+                        label: "Anything else to consider?",
+                        type: "free-text",
+                        required: false,
+                        placeholder: "Type any other details, requirements, or constraints here...",
+                    });
+                }
+
+                const request = {
+                    requestId,
+                    title,
+                    description: description ?? "",
+                    fields: finalFields,
+                    showExecuteButton: showExecuteButton ?? false,
+                };
+
+                const requestFile = path.join(dirs.requests, `${requestId}.json`);
+                await writeJsonAtomic(requestFile, request);
             }
 
-            const request = {
+            // Bounded poll slice (40s default) with host cancellation signal forwarded
+            const outcome = await pollForResponseSlice({
+                ipcRoot,
                 requestId,
-                title,
-                description: description ?? "",
-                fields: finalFields,
-                showExecuteButton: showExecuteButton ?? false,
-            };
+                origin: "antigravity",
+                signal: extra?.signal,
+            });
 
-            // Write request file atomically
-            const requestFile = path.join(dirs.requests, `${requestId}.json`);
-            await writeJsonAtomic(requestFile, request);
-
-            // Poll for response (5 minute timeout)
-            let response: Record<string, any>;
-            try {
-                response = await pollForResponse(requestId, 5 * 60 * 1000);
-            } catch (err: unknown) {
-                const message = err instanceof Error ? err.message : String(err);
+            if (outcome.outcome === "pending") {
                 return {
                     content: [
                         {
                             type: "text" as const,
                             text: JSON.stringify(
                                 {
-                                    action: "timeout",
-                                    dismissed: true,
-                                    error: redactPath(message),
-                                    message: "Alignment form timed out after 5 minutes of inactivity. Proceeding in safe mode.",
+                                    action: "pending",
+                                    requestId: outcome.requestId,
+                                    resumeRequestId: outcome.requestId,
+                                    userActive: outcome.userActive,
+                                    remainingInactivitySec: outcome.remainingInactivitySec,
+                                    message: "Form is active and awaiting user input. Call orbit_planner with resumeRequestId to continue waiting.",
                                 },
                                 null,
                                 2
@@ -187,6 +174,72 @@ server.tool(
                 };
             }
 
+            if (outcome.outcome === "unclaimed_timeout") {
+                return {
+                    content: [
+                        {
+                            type: "text" as const,
+                            text: JSON.stringify(
+                                {
+                                    action: "timeout",
+                                    requestId,
+                                    dismissed: true,
+                                    message: outcome.message,
+                                },
+                                null,
+                                2
+                            ),
+                        },
+                    ],
+                };
+            }
+
+            if (outcome.outcome === "inactivity_timeout") {
+                return {
+                    content: [
+                        {
+                            type: "text" as const,
+                            text: JSON.stringify(
+                                {
+                                    action: "timeout",
+                                    requestId,
+                                    dismissed: true,
+                                    message: outcome.message,
+                                },
+                                null,
+                                2
+                            ),
+                        },
+                    ],
+                };
+            }
+
+            if (outcome.outcome === "cancelled") {
+                return {
+                    content: [
+                        {
+                            type: "text" as const,
+                            text: JSON.stringify(
+                                {
+                                    action: "timeout",
+                                    requestId,
+                                    dismissed: true,
+                                    message: outcome.message || "Planning was cancelled.",
+                                },
+                                null,
+                                2
+                            ),
+                        },
+                    ],
+                };
+            }
+
+            if (outcome.outcome === "failed") {
+                throw new Error(outcome.error);
+            }
+
+            // outcome.outcome === "response"
+            const response = outcome.response;
             const action = response.action ?? "submit";
 
             if (action === "execute") {
@@ -197,6 +250,7 @@ server.tool(
                             text: JSON.stringify(
                                 {
                                     action: "execute",
+                                    requestId,
                                     message: "User clicked Execute Plan. Stop planning. Generate a post planning analysis, then begin implementation.",
                                     data: response.data ?? response,
                                 },
@@ -216,6 +270,7 @@ server.tool(
                             text: JSON.stringify(
                                 {
                                     action: "clarification",
+                                    requestId,
                                     message: "User requested clarification on the planning questions. Halt planning or coding activities and directly address the user's questions in chat.",
                                     question: response.clarificationRequest || "",
                                     specificClarifications: response.specificClarifications || [],
@@ -237,8 +292,9 @@ server.tool(
                             text: JSON.stringify(
                                 {
                                     action: "timeout",
+                                    requestId,
                                     dismissed: true,
-                                    message: "Inactivity timeout occurred. Proceeding without this planning context.",
+                                    message: response.message || "Inactivity timeout occurred. Proceeding without this planning context.",
                                 },
                                 null,
                                 2
@@ -248,7 +304,7 @@ server.tool(
                 };
             }
 
-            if (response.dismissed) {
+            if (response.dismissed || action === "dismiss") {
                 return {
                     content: [
                         {
@@ -256,6 +312,7 @@ server.tool(
                             text: JSON.stringify(
                                 {
                                     action: "dismiss",
+                                    requestId,
                                     dismissed: true,
                                     message: "User chose to skip. Proceed with the original prompt and existing context only. Do not apply assumptions from unanswered fields.",
                                 },
@@ -274,6 +331,7 @@ server.tool(
                         text: JSON.stringify(
                             {
                                 action: "submit",
+                                requestId,
                                 data: response.data ?? response,
                             },
                             null,
@@ -354,7 +412,8 @@ server.tool(
 
             const sanitizedProject = assertProjectKey(projectName || "_default");
             const brainRoot = getBrainRoot();
-            const projCartDir = path.join(brainRoot, sanitizedProject, "cartograph");
+            const projDir = getProjectDir(brainRoot, sanitizedProject);
+            const projCartDir = path.join(projDir, "cartograph");
             const existingReports: { filename: string; summary: string; taskId: string }[] = [];
 
             if (fs.existsSync(projCartDir)) {
@@ -440,18 +499,41 @@ server.tool(
                 if (!fs.existsSync(brainRoot)) {
                     return { content: [{ type: "text" as const, text: JSON.stringify([]) }] };
                 }
-                const entries = await fs.promises.readdir(brainRoot);
-                const projects: string[] = [];
-                for (const entry of entries) {
-                    const fullPath = path.join(brainRoot, entry);
+                const projects = new Set<string>();
+
+                // 1. Scan Layout v3 projects/ directory
+                const v3ProjectsDir = path.join(brainRoot, "projects");
+                if (fs.existsSync(v3ProjectsDir)) {
                     try {
-                        const stats = await fs.promises.stat(fullPath);
-                        if (stats.isDirectory() && fs.existsSync(path.join(fullPath, "memories"))) {
-                            projects.push(entry);
+                        const entries = await fs.promises.readdir(v3ProjectsDir);
+                        for (const entry of entries) {
+                            const fullPath = path.join(v3ProjectsDir, entry);
+                            try {
+                                const stats = await fs.promises.stat(fullPath);
+                                if (stats.isDirectory()) {
+                                    projects.add(entry.toLowerCase());
+                                }
+                            } catch { /* skip */ }
                         }
                     } catch { /* skip */ }
                 }
-                return { content: [{ type: "text" as const, text: JSON.stringify(projects) }] };
+
+                // 2. Scan top-level for backwards compatibility
+                try {
+                    const entries = await fs.promises.readdir(brainRoot);
+                    for (const entry of entries) {
+                        if (entry === "projects" || entry.startsWith(".")) continue;
+                        const fullPath = path.join(brainRoot, entry);
+                        try {
+                            const stats = await fs.promises.stat(fullPath);
+                            if (stats.isDirectory() && fs.existsSync(path.join(fullPath, "memories"))) {
+                                projects.add(entry.toLowerCase());
+                            }
+                        } catch { /* skip */ }
+                    }
+                } catch { /* skip */ }
+
+                return { content: [{ type: "text" as const, text: JSON.stringify(Array.from(projects).sort()) }] };
             }
 
             if (action === "read_file") {
@@ -486,65 +568,48 @@ server.tool(
                     throw new Error("projectName is required for ensure_project action");
                 }
                 const sanitized = assertProjectKey(projectName);
-                const projDir = path.join(brainRoot, sanitized);
+                const projDir = resolveInside(brainRoot, path.join("projects", sanitized));
+                const cartographDir = path.join(projDir, "cartograph");
                 const memoriesDir = path.join(projDir, "memories");
                 const sessionsDir = path.join(memoriesDir, "sessions");
-                const conceptsDir = path.join(memoriesDir, "concepts");
-                const factsDir = path.join(memoriesDir, "facts");
+                const featuresDir = path.join(memoriesDir, "features");
+                const tasksDir = path.join(memoriesDir, "tasks");
                 const archiveDir = path.join(projDir, "archive");
-                const cartographDir = path.join(projDir, "cartograph");
 
-                await ensureDirSafe(sessionsDir);
-                await ensureDirSafe(conceptsDir);
-                await ensureDirSafe(factsDir);
-                await ensureDirSafe(archiveDir);
                 await ensureDirSafe(cartographDir);
+                await ensureDirSafe(sessionsDir);
+                await ensureDirSafe(featuresDir);
+                await ensureDirSafe(tasksDir);
+                await ensureDirSafe(archiveDir);
 
                 const protocolPath = path.join(memoriesDir, "PROTOCOL.md");
                 if (!fs.existsSync(protocolPath)) {
-                    const protocolContent = `# Orbit Memory Protocol (v1.0)
+                    const protocolContent = `# Topic-Based Memory Protocol (v3.0)
 
-## 1. The Observation Format
-Every major task or discovery MUST be recorded in an \`<observation>\` block.
+This project organizes memories by specific topics (features, components, tasks, or bug fixes) rather than by conversation session.
 
-\`\`\`xml
-<observation>
-  <meta>
-    <title>[High-level Task Name]</title>
-    <type>[feature | bugfix | research | refactor]</type>
-    <project>${sanitized}</project>
-    <timestamp>YYYY-MM-DD HH:MM</timestamp>
-  </meta>
+## 1. The Topic Format
+Every topic should have its own dedicated markdown file in \`memories/features/\` or \`memories/tasks/\`.
+Append new updates to existing topic files using a chronological timeline format.
 
-  <narrative>
-    Brief description of what was done and key decisions.
-  </narrative>
-
-  <facts>
-    - [Truths discovered during this task]
-  </facts>
-
-  <concepts>
-    #tag1 #tag2
-  </concepts>
-
-  <files>
-    <read>[file path]</read>
-    <modified>[file path]</modified>
-  </files>
-</observation>
+Example Timeline Entry:
+\`\`\`markdown
+### [YYYY-MM-DD HH:MM] [Summary of Changes]
+- **What was changed**: Specific summary of files edited and code modifications.
+- **Why the changes were made**: Rationale and user intent.
+- **Project state**: Context or version at the time.
+- **Relation to prior changes**: How these changes relate to previous work.
 \`\`\`
 
 ## 2. Memory Lifecycle
-1. **Capture**: Write the observation to \`memories/sessions/SESSION_[ID].md\`.
-2. **Index**: Update \`memories/INDEX.md\` with new concepts and session links.
-3. **Consolidate**: Move recurring facts into \`memories/facts/\`.
-4. **Retrieve**: Before starting a task, search \`memories/\` for relevant context.
+1. **Capture**: Consolidate session work into topic files in \`memories/features/\` (for long-lived capabilities) or \`memories/tasks/\` (for specific fixes/issues).
+2. **Append**: If a file for the topic exists, append the new changes chronologically; do not create duplicate files.
+3. **Index**: Update \`memories/INDEX.md\`'s Active Topics section to link the modified files.
 
 ## 3. Storage Hierarchy
-- \`sessions/\`: Timestamped observations from every task.
-- \`concepts/\`: Deep dives into specific topics.
-- \`facts/\`: Atomic, immutable truths about the project.
+- \`features/\`: Topic files for features, components, UI layouts, and styling.
+- \`tasks/\`: Topic files for specific tasks, issues, and bug fixes.
+- \`sessions/\`: Working session logs and context records.
 `;
                     await writeAtomic(protocolPath, protocolContent);
                 }
@@ -553,7 +618,7 @@ Every major task or discovery MUST be recorded in an \`<observation>\` block.
                 if (!fs.existsSync(indexPath)) {
                     const indexContent = `# Memory Index
 
-This index maps concepts and tags to specific memory files. Update this after every observation.
+This index maps active topics and tags to their respective memory files. Update this when creating or appending to a topic file.
 
 ## Project Map
 - **${sanitized}**: This project directory.
@@ -561,7 +626,11 @@ This index maps concepts and tags to specific memory files. Update this after ev
 ## Concepts and Tags
 [Agent-populated during "update memory system"]
 
-## Recent Sessions
+## Active Topics
+### Features & Components
+[Agent-populated during "update memory system"]
+
+### Tasks & Bug Fixes
 [Agent-populated during "update memory system"]
 `;
                     await writeAtomic(indexPath, indexContent);
@@ -570,19 +639,36 @@ This index maps concepts and tags to specific memory files. Update this after ev
                 const globalContextPath = path.join(brainRoot, "global_context_summary.md");
                 if (fs.existsSync(globalContextPath)) {
                     let globalContent = await fs.promises.readFile(globalContextPath, "utf-8");
-                    const entries = await fs.promises.readdir(brainRoot);
-                    const validProjects: string[] = [];
-                    for (const entry of entries) {
-                        const fullPath = path.join(brainRoot, entry);
+                    const validProjects = new Set<string>();
+
+                    const v3Dir = path.join(brainRoot, "projects");
+                    if (fs.existsSync(v3Dir)) {
                         try {
-                            const stats = await fs.promises.stat(fullPath);
-                            if (stats.isDirectory() && fs.existsSync(path.join(fullPath, "memories"))) {
-                                validProjects.push(entry);
+                            const pEntries = await fs.promises.readdir(v3Dir);
+                            for (const e of pEntries) {
+                                try {
+                                    if ((await fs.promises.stat(path.join(v3Dir, e))).isDirectory()) {
+                                        validProjects.add(e.toLowerCase());
+                                    }
+                                } catch { /* skip */ }
                             }
                         } catch { /* skip */ }
                     }
 
-                    const projectsList = validProjects.map((p) => `- **${p}**`).join("\n");
+                    try {
+                        const rEntries = await fs.promises.readdir(brainRoot);
+                        for (const e of rEntries) {
+                            if (e === "projects" || e.startsWith(".")) continue;
+                            try {
+                                const fullPath = path.join(brainRoot, e);
+                                if ((await fs.promises.stat(fullPath)).isDirectory() && fs.existsSync(path.join(fullPath, "memories"))) {
+                                    validProjects.add(e.toLowerCase());
+                                }
+                            } catch { /* skip */ }
+                        }
+                    } catch { /* skip */ }
+
+                    const projectsList = Array.from(validProjects).sort().map((p) => `- **${p}**`).join("\n");
                     const regex = /(## Registered Projects\s*)([\s\S]*?)(?=\n\n##|$)/;
                     if (regex.test(globalContent)) {
                         globalContent = globalContent.replace(regex, `$1\n${projectsList}\n`);
@@ -600,7 +686,8 @@ This index maps concepts and tags to specific memory files. Update this after ev
                     throw new Error("projectName is required for list_cartograph_reports action");
                 }
                 const sanitized = assertProjectKey(projectName);
-                const cartographDir = path.join(brainRoot, sanitized, "cartograph");
+                const projDir = getProjectDir(brainRoot, sanitized);
+                const cartographDir = path.join(projDir, "cartograph");
                 if (!fs.existsSync(cartographDir)) {
                     return { content: [{ type: "text" as const, text: JSON.stringify([]) }] };
                 }
@@ -623,29 +710,64 @@ This index maps concepts and tags to specific memory files. Update this after ev
                 if (!fs.existsSync(brainRoot)) {
                     return { content: [{ type: "text" as const, text: JSON.stringify({}) }] };
                 }
-                const entries = await fs.promises.readdir(brainRoot);
                 const allReports: Record<string, { filename: string; summary: string; taskId: string }[]> = {};
 
-                for (const proj of entries) {
-                    const cartographDir = path.join(brainRoot, proj, "cartograph");
-                    if (fs.existsSync(cartographDir)) {
-                        const files = (await fs.promises.readdir(cartographDir)).filter((file) => file.endsWith(".json"));
-                        const reports: { filename: string; summary: string; taskId: string }[] = [];
-                        for (const file of files) {
-                            try {
-                                const parsed = await readJsonSafe<{ summary?: string; taskId?: string }>(path.join(cartographDir, file));
-                                reports.push({
-                                    filename: file,
-                                    summary: parsed.summary || "",
-                                    taskId: parsed.taskId || "",
-                                });
-                            } catch { /* skip corrupt */ }
+                // 1. Scan Layout v3 projects/ directory
+                const v3Dir = path.join(brainRoot, "projects");
+                if (fs.existsSync(v3Dir)) {
+                    try {
+                        const pEntries = await fs.promises.readdir(v3Dir);
+                        for (const proj of pEntries) {
+                            const cartographDir = path.join(v3Dir, proj, "cartograph");
+                            if (fs.existsSync(cartographDir)) {
+                                const files = (await fs.promises.readdir(cartographDir)).filter((file) => file.endsWith(".json"));
+                                const reports: { filename: string; summary: string; taskId: string }[] = [];
+                                for (const file of files) {
+                                    try {
+                                        const parsed = await readJsonSafe<{ summary?: string; taskId?: string }>(path.join(cartographDir, file));
+                                        reports.push({
+                                            filename: file,
+                                            summary: parsed.summary || "",
+                                            taskId: parsed.taskId || "",
+                                        });
+                                    } catch { /* skip corrupt */ }
+                                }
+                                if (reports.length > 0) {
+                                    allReports[proj.toLowerCase()] = reports;
+                                }
+                            }
                         }
-                        if (reports.length > 0) {
-                            allReports[proj] = reports;
+                    } catch { /* skip */ }
+                }
+
+                // 2. Scan legacy root for projects not already found in projects/
+                try {
+                    const entries = await fs.promises.readdir(brainRoot);
+                    for (const proj of entries) {
+                        if (proj === "projects" || proj.startsWith(".")) continue;
+                        const projKey = proj.toLowerCase();
+                        if (allReports[projKey]) continue; // prefer v3
+                        const cartographDir = path.join(brainRoot, proj, "cartograph");
+                        if (fs.existsSync(cartographDir)) {
+                            const files = (await fs.promises.readdir(cartographDir)).filter((file) => file.endsWith(".json"));
+                            const reports: { filename: string; summary: string; taskId: string }[] = [];
+                            for (const file of files) {
+                                try {
+                                    const parsed = await readJsonSafe<{ summary?: string; taskId?: string }>(path.join(cartographDir, file));
+                                    reports.push({
+                                        filename: file,
+                                        summary: parsed.summary || "",
+                                        taskId: parsed.taskId || "",
+                                    });
+                                } catch { /* skip corrupt */ }
+                            }
+                            if (reports.length > 0) {
+                                allReports[projKey] = reports;
+                            }
                         }
                     }
-                }
+                } catch { /* skip */ }
+
                 return { content: [{ type: "text" as const, text: JSON.stringify(allReports, null, 2) }] };
             }
 
@@ -658,7 +780,8 @@ This index maps concepts and tags to specific memory files. Update this after ev
                 }
                 const sanitizedProj = assertProjectKey(projectName);
                 const sanitizedFile = assertSafeFileName(filename);
-                const fullPath = path.join(brainRoot, sanitizedProj, "cartograph", sanitizedFile);
+                const projDir = getProjectDir(brainRoot, sanitizedProj);
+                const fullPath = path.join(projDir, "cartograph", sanitizedFile);
                 if (!fs.existsSync(fullPath)) {
                     throw new Error(`Report file not found: ${filename} in project ${projectName}`);
                 }
@@ -678,7 +801,8 @@ This index maps concepts and tags to specific memory files. Update this after ev
                 }
                 const sanitizedProj = assertProjectKey(projectName);
                 const sanitizedFile = assertSafeFileName(filename);
-                const cartographDir = path.join(brainRoot, sanitizedProj, "cartograph");
+                const projDir = resolveInside(brainRoot, path.join("projects", sanitizedProj));
+                const cartographDir = path.join(projDir, "cartograph");
                 await ensureDirSafe(cartographDir);
 
                 const fullPath = path.join(cartographDir, sanitizedFile);
@@ -695,7 +819,8 @@ This index maps concepts and tags to specific memory files. Update this after ev
                 }
                 const sanitizedProj = assertProjectKey(projectName);
                 const sanitizedFile = assertSafeFileName(filename);
-                const fullPath = path.join(brainRoot, sanitizedProj, "cartograph", sanitizedFile);
+                const projDir = getProjectDir(brainRoot, sanitizedProj);
+                const fullPath = path.join(projDir, "cartograph", sanitizedFile);
                 if (!fs.existsSync(fullPath)) {
                     throw new Error(`Report file not found for deletion: ${filename} in project ${projectName}`);
                 }
@@ -717,8 +842,10 @@ This index maps concepts and tags to specific memory files. Update this after ev
                 const sanitizedTgt = assertProjectKey(targetProject);
                 const sanitizedFile = assertSafeFileName(filename);
 
-                const srcPath = path.join(brainRoot, sanitizedSrc, "cartograph", sanitizedFile);
-                const tgtDir = path.join(brainRoot, sanitizedTgt, "cartograph");
+                const srcProjDir = getProjectDir(brainRoot, sanitizedSrc);
+                const srcPath = path.join(srcProjDir, "cartograph", sanitizedFile);
+                const tgtProjDir = resolveInside(brainRoot, path.join("projects", sanitizedTgt));
+                const tgtDir = path.join(tgtProjDir, "cartograph");
                 const tgtPath = path.join(tgtDir, sanitizedFile);
 
                 if (!fs.existsSync(srcPath)) {
@@ -729,7 +856,7 @@ This index maps concepts and tags to specific memory files. Update this after ev
                 const raw = await fs.promises.readFile(srcPath, "utf-8");
                 const parsed = JSON.parse(raw);
                 if (typeof parsed === "object" && parsed !== null) {
-                    parsed.projectName = targetProject;
+                    parsed.projectName = sanitizedTgt;
                 }
 
                 await writeJsonAtomic(tgtPath, parsed);
@@ -746,11 +873,12 @@ This index maps concepts and tags to specific memory files. Update this after ev
                     throw new Error("filenames is required for bulk_delete_cartograph_reports action");
                 }
                 const sanitizedProj = assertProjectKey(projectName);
+                const projDir = getProjectDir(brainRoot, sanitizedProj);
                 const trashed: string[] = [];
 
                 for (const fn of filenames) {
                     const sanitizedFile = assertSafeFileName(fn);
-                    const fullPath = path.join(brainRoot, sanitizedProj, "cartograph", sanitizedFile);
+                    const fullPath = path.join(projDir, "cartograph", sanitizedFile);
                     if (fs.existsSync(fullPath)) {
                         await moveToTrash(fullPath, brainRoot);
                         trashed.push(fn);
@@ -771,7 +899,8 @@ This index maps concepts and tags to specific memory files. Update this after ev
                 }
                 const sanitizedProj = assertProjectKey(projectName);
                 const sanitizedFile = assertSafeFileName(filename);
-                const fullPath = path.join(brainRoot, sanitizedProj, "cartograph", sanitizedFile);
+                const projDir = getProjectDir(brainRoot, sanitizedProj);
+                const fullPath = path.join(projDir, "cartograph", sanitizedFile);
                 if (!fs.existsSync(fullPath)) {
                     throw new Error(`Report file not found for update: ${filename} in project ${projectName}`);
                 }

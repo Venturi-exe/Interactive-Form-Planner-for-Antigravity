@@ -71,4 +71,11 @@ export const LIMITS = {
     TRASH_TTL_MS: 14 * 24 * 60 * 60 * 1000,
     LOCK_STALE_MS: 30 * 1000, // 30 seconds
     MAX_LOCK_WAIT_MS: 5 * 1000, // 5 seconds
+    PLANNER_POLL_SLICE_MS: 40 * 1000, // 40s total invocation budget
+    PLANNER_UNCLAIMED_TIMEOUT_MS: 15 * 1000, // 15s claim fail-safe
+    PLANNER_UI_HEARTBEAT_THROTTLE_MS: 2 * 1000, // Throttled UI activity write
+    PLANNER_AGENT_HEARTBEAT_MS: 2 * 1000, // Polling heartbeat interval
+    PLANNER_AGENT_POLL_STALE_MS: 10 * 1000, // Stale threshold during active poll
+    PLANNER_AGENT_SLICE_GAP_MS: 20 * 1000, // Max permitted gap between slices
+    PLANNER_ANSWER_RETENTION_TTL_MS: 30 * 60 * 1000, // 30m durable response retention
 } as const;

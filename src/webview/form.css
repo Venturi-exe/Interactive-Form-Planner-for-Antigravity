@@ -1,7 +1,7 @@
 /**
  * Orbit : Ultimate planning tool for antigravity.
  *
- * Copyright (c) 2026 Venturi-exe / VNTR.CORP
+ * Copyright (c) 2026 Venturi-exe / VNTRCORP
  * Licensed under the Orbit Personal Use License.
  * See LICENSE.txt in the project root for license information.
  */
@@ -428,6 +428,25 @@ body {
 @keyframes pulseWarning {
     from { opacity: 0.9; }
     to { opacity: 1.0; }
+}
+
+/* Agent Disconnect Notice Banner */
+#agent-disconnect-banner {
+    display: none;
+    background-color: var(--vscode-inputValidation-infoBackground, #004380);
+    color: var(--vscode-inputValidation-infoForeground, var(--vscode-foreground, #ffffff));
+    border: 1px solid var(--vscode-inputValidation-infoBorder, #007acc);
+    padding: 8px 10px;
+    margin-bottom: 12px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    text-align: center;
+    line-height: 1.4;
+}
+
+#agent-disconnect-banner.visible {
+    display: block;
 }
 
 /* Clarification Section */
@@ -899,6 +918,46 @@ body {
     color: var(--vscode-descriptionForeground);
     cursor: not-allowed;
     filter: none;
+}
+
+.action-btn-primary {
+    padding: 8px 16px;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--vscode-button-foreground, #ffffff);
+    background-color: var(--vscode-button-background, #0078d4);
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: filter 0.15s ease, opacity 0.15s ease;
+}
+
+.action-btn-primary:hover {
+    background-color: var(--vscode-button-hoverBackground, #0063b1);
+}
+
+.action-btn-secondary {
+    padding: 8px 16px;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+    background-color: var(--vscode-button-secondaryBackground, rgba(128, 128, 128, 0.15));
+    border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.25));
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+
+.action-btn-secondary:hover {
+    background-color: var(--vscode-button-secondaryHoverBackground, rgba(128, 128, 128, 0.25));
+}
+
+.btn-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
 }
 
 /* Restore to sidebar button */

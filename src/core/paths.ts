@@ -131,7 +131,7 @@ export function normalizeProjectKey(key: string): string {
   }
 
   const lower = key.trim().toLowerCase();
-  if (lower === 'default' || lower === '_default') {
+  if (lower === 'default' || lower === '_default' || lower === '[default]') {
     return '_default';
   }
 
@@ -139,6 +139,10 @@ export function normalizeProjectKey(key: string): string {
   let cleaned = lower.replace(/[^a-z0-9._-]/g, '_').replace(/_+/g, '_');
   // N-05: Strip leading and trailing dots, dashes, and underscores
   cleaned = cleaned.replace(/^[._-]+|[._-]+$/g, '');
+
+  if (cleaned === 'default' || cleaned === '_default') {
+    return '_default';
+  }
 
   // N-05: Guard against Windows reserved device names (con, prn, aux, nul, com1-9, lpt1-9)
   if (WINDOWS_RESERVED.test(cleaned)) {
@@ -155,7 +159,7 @@ export function normalizeProjectKey(key: string): string {
 
 /**
  * Validates and normalizes project keys.
- * Lowercases input per project key casing convention. Throws on invalid or reserved prefixes.
+ * Lowercases input per project key casing convention. Maps default variants to _default. Throws on invalid or reserved prefixes.
  */
 export function assertProjectKey(key: string): string {
   if (typeof key !== 'string' || !key.trim()) {
@@ -164,8 +168,8 @@ export function assertProjectKey(key: string): string {
 
   const lower = key.trim().toLowerCase();
 
-  if (lower === '_default') {
-    return lower;
+  if (lower === '_default' || lower === 'default' || lower === '[default]') {
+    return '_default';
   }
 
   if (lower.startsWith('_')) {
@@ -178,6 +182,26 @@ export function assertProjectKey(key: string): string {
   }
 
   return lower;
+}
+
+/**
+ * Resolves the canonical directory for a project under brainRoot.
+ * Prefers Layout v3 (projects/<key>), falling back to legacy flat (<key>) if present.
+ */
+export function getProjectDir(brainRoot: string, key: string): string {
+  const sanitized = normalizeProjectKey(key);
+  const targetSubPath = path.join('projects', sanitized);
+  const v3Path = resolveInside(brainRoot, targetSubPath);
+  if (fs.existsSync(v3Path)) {
+    return v3Path;
+  }
+  try {
+    const legacyPath = resolveInside(brainRoot, sanitized);
+    if (fs.existsSync(legacyPath)) {
+      return legacyPath;
+    }
+  } catch { /* skip */ }
+  return v3Path;
 }
 
 /**
@@ -214,6 +238,8 @@ const DENY_PATTERNS = [
   /^\.layout-version$/i,
   /^\.gitignore$/i,
   /^\.migrated([\\/].*)?$/i,
+  /^\.migrated-marker$/i,
+  /^\.migrated\.marker$/i,
   /^migration-v3\.json$/i,
 ];
 

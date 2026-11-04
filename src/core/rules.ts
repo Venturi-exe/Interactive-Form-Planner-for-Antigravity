@@ -189,6 +189,16 @@ If calling \`orbit_planner\` results in a JSON response containing \`clarificati
 
 If calling \`orbit_planner\` results in a JSON response with \`"action": "timeout"\`, the agent MUST immediately halt execution, make no modifications to the workspace, edit no files, and explicitly inform the user that their input is required to continue. The agent's message MUST list the exact pending questions and options that were timed out.
 
+## Orbit Planner: Pending Slice Continuation Rule
+
+The \`orbit_planner\` tool runs in bounded execution slices (default 40s) below host tool deadlines.
+If calling \`orbit_planner\` returns a response with \`"action": "pending"\`:
+1. The form is still displayed and active in the editor.
+2. The agent MUST NOT treat this as a failure, timeout, or cancellation.
+3. The agent MUST NOT proceed with workspace modifications.
+4. The agent MUST immediately call \`orbit_planner\` again, passing \`{ "resumeRequestId": "<requestId>" }\` (using the \`requestId\` returned in the pending payload).
+5. The agent continues this bounded slice continuation loop until the user submits, executes, or dismisses the form, or an actual terminal status is reached.
+
 ## Orbit Cartograph: Rich Planning Context and Trigger Rules
 
 The \`write_impact_report\` tool MUST be called as the final action of any response turn that meets the trigger conditions. The scope of this report is strictly limited to the **current response turn only** (never look back at older turns in the conversation).
