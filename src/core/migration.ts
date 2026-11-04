@@ -40,6 +40,8 @@ const EXCLUDED_DIRS = new Set([
     BRAIN_DIRS.LOCKS,
     BRAIN_DIRS.JOURNAL,
     ".migrated",
+    ".migrated-marker",
+    ".migrated.marker",
     "optic",
     "_trash",
     "_quarantine",
@@ -340,6 +342,25 @@ export async function migrateToLayoutV3(
         await writeJsonAtomic(journalPath, journal);
 
         // Phase 2: Move ONLY verified folders to permanent .migrated/v2-<ts>/ archive (never purged)
+        // Check if legacy .migrated marker file exists and rename it to avoid collision with .migrated/ archive directory
+        const legacyMarker = path.join(brainRoot, ".migrated");
+        if (fs.existsSync(legacyMarker)) {
+            try {
+                const st = await fs.promises.stat(legacyMarker);
+                if (!st.isDirectory()) {
+                    const markerDest = path.join(brainRoot, ".migrated-marker");
+                    if (fs.existsSync(markerDest)) {
+                        await fs.promises.unlink(legacyMarker);
+                    } else {
+                        await fs.promises.rename(legacyMarker, markerDest);
+                    }
+                }
+            } catch (err: unknown) {
+                const msg = err instanceof Error ? err.message : String(err);
+                journal.errors.push(`Failed to safely handle legacy .migrated marker file: ${msg}`);
+            }
+        }
+
         const ts = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "");
         const migratedRoot = path.join(brainRoot, ".migrated", `v2-${ts}`);
         if (verifiedCandidates.length > 0) {

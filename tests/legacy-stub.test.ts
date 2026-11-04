@@ -1,3 +1,4 @@
+import { LEGACY_EXTENSION_IDS } from "../src/core/config";
 import { describe, it, expect } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
@@ -11,7 +12,7 @@ describe("legacy-stub extension", () => {
         expect(fs.existsSync(packageJsonPath)).toBe(true);
         const manifest = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
 
-        expect(manifest.name).toBe("antigravity-pre-execution-form-planner");
+        expect(manifest.name).toBe(LEGACY_EXTENSION_IDS[0].slice("vntrcorp.".length));
         expect(manifest.publisher).toBe("VNTRCORP");
         expect(manifest.version).toBe("0.2.7");
         expect(manifest.main).toBe("./extension.js");
@@ -40,11 +41,11 @@ describe("legacy-stub extension", () => {
         const interactivePkgPath = path.join(interactiveStubDir, "package.json");
         const interactiveExtJsPath = path.join(interactiveStubDir, "extension.js");
 
-        it("has expected manifest properties for antigravity-interactive-form-planner-planning-tool", () => {
+        it("has expected manifest properties for the interactive legacy package", () => {
             expect(fs.existsSync(interactivePkgPath)).toBe(true);
             const manifest = JSON.parse(fs.readFileSync(interactivePkgPath, "utf-8"));
 
-            expect(manifest.name).toBe("antigravity-interactive-form-planner-planning-tool");
+            expect(manifest.name).toBe(LEGACY_EXTENSION_IDS[1].slice("vntrcorp.".length));
             expect(manifest.publisher).toBe("VNTRCORP");
             expect(manifest.version).toBe("0.2.7");
             expect(manifest.main).toBe("./extension.js");

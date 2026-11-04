@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
-import { resolveInside, assertProjectKey, assertSafeFileName, isDenied, redactPath, normalizeProjectKey } from '../src/core/paths';
+import { resolveInside, assertProjectKey, assertSafeFileName, isDenied, redactPath, normalizeProjectKey, getProjectDir } from '../src/core/paths';
 
 describe('core/paths', () => {
   const root = path.join(os.tmpdir(), 'orbit-test-root');
@@ -87,6 +87,14 @@ describe('core/paths', () => {
       expect(normalizeProjectKey('COM1')).toBe('project_com1');
     });
 
+    it('canonicalizes [Default], Default, default, and _default to _default', () => {
+      expect(normalizeProjectKey('[Default]')).toBe('_default');
+      expect(normalizeProjectKey('Default')).toBe('_default');
+      expect(normalizeProjectKey('default')).toBe('_default');
+      expect(normalizeProjectKey('_default')).toBe('_default');
+      expect(normalizeProjectKey('___default___')).toBe('_default');
+    });
+
     it('always outputs a valid key starting with letter or digit', () => {
       const res = normalizeProjectKey('???!!!');
       expect(res).toBe('_default');
@@ -101,10 +109,46 @@ describe('core/paths', () => {
       expect(assertProjectKey('_default')).toBe('_default');
     });
 
+    it('canonicalizes [Default], Default, and default to _default', () => {
+      expect(assertProjectKey('[Default]')).toBe('_default');
+      expect(assertProjectKey('Default')).toBe('_default');
+      expect(assertProjectKey('default')).toBe('_default');
+      expect(assertProjectKey('_default')).toBe('_default');
+    });
+
     it('rejects invalid keys or reserved prefixes', () => {
       expect(() => assertProjectKey('_custom')).toThrow(/reserved prefix/i);
       expect(() => assertProjectKey('../escape')).toThrow(/Invalid project key/i);
       expect(() => assertProjectKey('')).toThrow(/non-empty/i);
+    });
+  });
+
+  describe('getProjectDir', () => {
+    it('resolves projects/<key> when v3 directory exists', () => {
+      const testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'orbit-proj-test-'));
+      try {
+        const v3Dir = path.join(testDir, 'projects', 'orbit');
+        fs.mkdirSync(v3Dir, { recursive: true });
+        expect(getProjectDir(testDir, 'Orbit')).toBe(v3Dir);
+      } finally {
+        fs.rmSync(testDir, { recursive: true, force: true });
+      }
+    });
+
+    it('falls back to flat legacy directory when present and v3 does not exist', () => {
+      const testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'orbit-proj-test-'));
+      try {
+        const legacyDir = path.join(testDir, 'legacy_app');
+        fs.mkdirSync(legacyDir, { recursive: true });
+        expect(getProjectDir(testDir, 'legacy_app')).toBe(legacyDir);
+      } finally {
+        fs.rmSync(testDir, { recursive: true, force: true });
+      }
+    });
+
+    it('defaults to projects/<key> when neither exists', () => {
+      const testDir = path.join(os.tmpdir(), 'orbit-proj-test-nonexistent');
+      expect(getProjectDir(testDir, 'NewApp')).toBe(path.resolve(testDir, 'projects', 'newapp'));
     });
   });
 
@@ -134,16 +178,18 @@ describe('core/paths', () => {
       // N-09: Subfiles inside .migrated are denied
       expect(isDenied('.migrated/v2-2026/file.txt')).toBe(true);
       expect(isDenied('.migrated')).toBe(true);
+      expect(isDenied('.migrated-marker')).toBe(true);
+      expect(isDenied('.migrated.marker')).toBe(true);
       expect(isDenied('myproject/memories/facts.md')).toBe(false);
     });
   });
 
   describe('redactPath', () => {
     it('redacts user directories to ~', () => {
-      expect(redactPath('C:\\Users\\cesar\\.orbit-brain')).toBe('~\\.orbit-brain');
-      expect(redactPath('C:/Users/cesar/.orbit-brain')).toBe('~/.orbit-brain');
-      expect(redactPath('/Users/cesar/.orbit-brain')).toBe('~/.orbit-brain');
-      expect(redactPath('/home/cesar/.orbit-brain')).toBe('~/.orbit-brain');
+      expect(redactPath('C:\\Users\\fixture-user\\.orbit-brain')).toBe('~\\.orbit-brain');
+      expect(redactPath('C:/Users/fixture-user/.orbit-brain')).toBe('~/.orbit-brain');
+      expect(redactPath('/Users/fixture-user/.orbit-brain')).toBe('~/.orbit-brain');
+      expect(redactPath('/home/fixture-user/.orbit-brain')).toBe('~/.orbit-brain');
     });
   });
 });

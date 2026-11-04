@@ -2,7 +2,15 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import { injectOrbitRules, removeOrbitRules, ORBIT_START_MARKER, ORBIT_END_MARKER } from "../src/core/rules.js";
+import {
+    injectOrbitRules,
+    replaceOrbitRules,
+    restoreOrbitRulesBackup,
+    getOrbitSpecification,
+    removeOrbitRules,
+    ORBIT_START_MARKER,
+    ORBIT_END_MARKER,
+} from "../src/core/rules.js";
 import { detectHost } from "../src/core/host.js";
 
 describe("rules and host management", () => {
@@ -84,6 +92,48 @@ describe("rules and host management", () => {
         const updated = fs.readFileSync(geminiMdPath, "utf-8");
         expect(updated).toContain("\r\n");
         expect(updated.includes("\r\n")).toBe(true);
+    });
+
+    it("replaceOrbitRules creates timestamped backup and replaces content cleanly", async () => {
+        const initial = `# Pre-existing Custom Instructions\nDo not delete me without backup.`;
+        fs.writeFileSync(geminiMdPath, initial, "utf-8");
+
+        const replaced = await replaceOrbitRules(geminiMdPath, "Fresh Orbit Rules Only");
+        expect(replaced).toBe(true);
+
+        const updated = fs.readFileSync(geminiMdPath, "utf-8");
+        expect(updated).toContain("Fresh Orbit Rules Only");
+        expect(updated).not.toContain("Pre-existing Custom Instructions");
+
+        // Verify backup file exists
+        const files = fs.readdirSync(tempDir);
+        const backupFile = files.find((f) => f.startsWith("GEMINI.md.bak-"));
+        expect(backupFile).toBeDefined();
+        const backupContent = fs.readFileSync(path.join(tempDir, backupFile!), "utf-8");
+        expect(backupContent).toBe(initial);
+    });
+
+    it("restoreOrbitRulesBackup restores original content from backup", async () => {
+        const initial = `# My Unique Rules\nKeep this always.`;
+        fs.writeFileSync(geminiMdPath, initial, "utf-8");
+
+        await replaceOrbitRules(geminiMdPath, "Replaced Content");
+        expect(fs.readFileSync(geminiMdPath, "utf-8")).toContain("Replaced Content");
+
+        const restored = await restoreOrbitRulesBackup(geminiMdPath);
+        expect(restored).toBe(true);
+        expect(fs.readFileSync(geminiMdPath, "utf-8")).toBe(initial);
+    });
+
+    it("getOrbitSpecification returns comprehensive technical documentation", () => {
+        const spec = getOrbitSpecification();
+        expect(spec).toContain("orbit_planner");
+        expect(spec).toContain("write_impact_report");
+        expect(spec).toContain("orbit_memory");
+        expect(spec).toContain("planningContext");
+        expect(spec).toContain("## 1. Prompt Understanding");
+        expect(spec).toContain("## 8. Final Outcome");
+        expect(spec).toContain("~/.orbit-brain/");
     });
 
     it("detectHost identifies environment correctly", () => {

@@ -1,3 +1,4 @@
+import { LEGACY_EXTENSION_IDS } from "../src/core/config";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
@@ -126,8 +127,8 @@ describe("runUninstall and isOrbitServerEntry (N-01, N-02)", () => {
     });
 
     it("running uninstall hook from real stock VS Code path with real extension name preserves Antigravity config and rules (M-01)", async () => {
-        const realExtensionDir = "vntrcorp.antigravity-interactive-form-planner-planning-tool-0.4.0";
-        const realStorageDir = "vntrcorp.antigravity-interactive-form-planner-planning-tool";
+        const realExtensionDir = `${LEGACY_EXTENSION_IDS[1]}-0.4.0`;
+        const realStorageDir = LEGACY_EXTENSION_IDS[1];
 
         // Antigravity's storage path (also contains the word 'antigravity' in the extension name!)
         const antigravityStoragePath = `C:/Users/test/AppData/Roaming/Antigravity/User/globalStorage/${realStorageDir}/mcp-server/index.js`;
@@ -159,8 +160,8 @@ describe("runUninstall and isOrbitServerEntry (N-01, N-02)", () => {
     });
 
     it("mirror test: uninstalling from real Antigravity path removes Antigravity server and GEMINI.md rules (M-01)", async () => {
-        const realExtensionDir = "vntrcorp.antigravity-interactive-form-planner-planning-tool-0.4.0";
-        const realStorageDir = "vntrcorp.antigravity-interactive-form-planner-planning-tool";
+        const realExtensionDir = `${LEGACY_EXTENSION_IDS[1]}-0.4.0`;
+        const realStorageDir = LEGACY_EXTENSION_IDS[1];
 
         const antigravityStoragePath = `C:/Users/test/AppData/Roaming/Antigravity/User/globalStorage/${realStorageDir}/mcp-server/index.js`;
         const configWithAntigravity = `{
@@ -190,8 +191,8 @@ describe("runUninstall and isOrbitServerEntry (N-01, N-02)", () => {
     });
 
     it("uninstalling from stock VS Code removes VS Code's own entry while leaving Antigravity's intact (M-01)", async () => {
-        const realExtensionDir = "vntrcorp.antigravity-interactive-form-planner-planning-tool-0.4.0";
-        const realStorageDir = "vntrcorp.antigravity-interactive-form-planner-planning-tool";
+        const realExtensionDir = `${LEGACY_EXTENSION_IDS[1]}-0.4.0`;
+        const realStorageDir = LEGACY_EXTENSION_IDS[1];
 
         const vscodeStorage = `C:/Users/test/AppData/Roaming/Code/User/globalStorage/${realStorageDir}/mcp-server/index.js`;
         const antigravityStorage = `C:/Users/test/AppData/Roaming/Antigravity/User/globalStorage/${realStorageDir}/mcp-server/index.js`;
@@ -222,8 +223,8 @@ describe("runUninstall and isOrbitServerEntry (N-01, N-02)", () => {
     });
 
     it("uninstalling from stock VS Code removes rules from GEMINI.md if no Orbit keys remain in mcp_config.json (P-01 side A)", async () => {
-        const realExtensionDir = "vntrcorp.antigravity-interactive-form-planner-planning-tool-0.4.0";
-        const realStorageDir = "vntrcorp.antigravity-interactive-form-planner-planning-tool";
+        const realExtensionDir = `${LEGACY_EXTENSION_IDS[1]}-0.4.0`;
+        const realStorageDir = LEGACY_EXTENSION_IDS[1];
 
         const vscodeStorage = `C:/Users/test/AppData/Roaming/Code/User/globalStorage/${realStorageDir}/mcp-server/index.js`;
 
@@ -257,14 +258,14 @@ describe("runUninstall and isOrbitServerEntry (N-01, N-02)", () => {
         expect(isOrbitServerEntry("orbit", { args: [otherExtPath] }, undefined, false)).toBe(false);
 
         // Entry pointing to genuine extension storage for VS Code: matches when hostIsAntigravity is false
-        const genuineVsCodePath = "C:/Users/test/AppData/Roaming/Code/User/globalStorage/vntrcorp.antigravity-interactive-form-planner-planning-tool/mcp-server/index.js";
+        const genuineVsCodePath = `C:/Users/test/AppData/Roaming/Code/User/globalStorage/${LEGACY_EXTENSION_IDS[1]}/mcp-server/index.js`;
         expect(isOrbitServerEntry("orbit", { args: [genuineVsCodePath] }, undefined, false)).toBe(true);
 
         const genuineOrbitVsCodePath = "C:/Users/test/AppData/Roaming/Code/User/globalStorage/vntrcorp.orbit/mcp-server/index.js";
         expect(isOrbitServerEntry("orbit", { args: [genuineOrbitVsCodePath] }, undefined, false)).toBe(true);
 
         // Entry pointing to genuine extension storage for Antigravity: does NOT match when hostIsAntigravity is false
-        const genuineAntigravityPath = "C:/Users/test/AppData/Roaming/Antigravity/User/globalStorage/vntrcorp.antigravity-interactive-form-planner-planning-tool/mcp-server/index.js";
+        const genuineAntigravityPath = `C:/Users/test/AppData/Roaming/Antigravity/User/globalStorage/${LEGACY_EXTENSION_IDS[1]}/mcp-server/index.js`;
         expect(isOrbitServerEntry("orbit", { args: [genuineAntigravityPath] }, undefined, false)).toBe(false);
     });
 
@@ -282,8 +283,8 @@ describe("runUninstall and isOrbitServerEntry (N-01, N-02)", () => {
     });
 
     it("cleans VS Code-owned entries across multiple mcp_config.json files while preserving rules if an Antigravity entry remains (Q-01)", async () => {
-        const realExtensionDir = "vntrcorp.antigravity-interactive-form-planner-planning-tool-0.4.0";
-        const realStorageDir = "vntrcorp.antigravity-interactive-form-planner-planning-tool";
+        const realExtensionDir = `${LEGACY_EXTENSION_IDS[1]}-0.4.0`;
+        const realStorageDir = LEGACY_EXTENSION_IDS[1];
 
         const ideConfigPath = path.join(tempDir, "antigravity-ide-config.json");
         const cliConfigPath = path.join(tempDir, "antigravity-cli-config.json");
@@ -329,8 +330,8 @@ describe("runUninstall and isOrbitServerEntry (N-01, N-02)", () => {
     });
 
     it("removes rules from GEMINI.md when all candidate config files have no remaining Orbit entries (Q-01)", async () => {
-        const realExtensionDir = "vntrcorp.antigravity-interactive-form-planner-planning-tool-0.4.0";
-        const realStorageDir = "vntrcorp.antigravity-interactive-form-planner-planning-tool";
+        const realExtensionDir = `${LEGACY_EXTENSION_IDS[1]}-0.4.0`;
+        const realStorageDir = LEGACY_EXTENSION_IDS[1];
 
         const ideConfigPath = path.join(tempDir, "antigravity-ide-config2.json");
         const cliConfigPath = path.join(tempDir, "antigravity-cli-config2.json");
@@ -419,4 +420,57 @@ describe("runUninstall and isOrbitServerEntry (N-01, N-02)", () => {
         const configAfter = JSON.parse(fs.readFileSync(ideConfigPath, "utf-8"));
         expect(configAfter.mcpServers.orbit).toBeUndefined();
     });
+
+    it("respects preserveRules: true and leaves GEMINI.md completely untouched", async () => {
+        const ideConfigPath = path.join(tempDir, "antigravity-ide-preserve.json");
+        const orbitStorage = "C:/Users/test/AppData/Roaming/Antigravity/User/globalStorage/vntrcorp.orbit/mcp-server/index.js";
+
+        fs.writeFileSync(ideConfigPath, JSON.stringify({
+            mcpServers: {
+                orbit: { command: "node", args: [orbitStorage] }
+            }
+        }), "utf-8");
+        const customPrompt = "# My Custom Protocol Rules\nDo not touch.";
+        fs.writeFileSync(mockGeminiMd, customPrompt, "utf-8");
+
+        const res = await runUninstall({
+            appName: "Google Antigravity IDE",
+            mcpConfigPath: ideConfigPath,
+            geminiMdPath: mockGeminiMd,
+            preserveRules: true,
+        });
+
+        expect(res.success).toBe(true);
+        expect(res.removedServer).toBe(true);
+        expect(res.removedRules).toBe(false);
+        expect(fs.readFileSync(mockGeminiMd, "utf-8")).toBe(customPrompt);
+    });
+
+    it("restores backup when restoreBackup: true is passed", async () => {
+        const ideConfigPath = path.join(tempDir, "antigravity-ide-restore.json");
+        const orbitStorage = "C:/Users/test/AppData/Roaming/Antigravity/User/globalStorage/vntrcorp.orbit/mcp-server/index.js";
+
+        fs.writeFileSync(ideConfigPath, JSON.stringify({
+            mcpServers: {
+                orbit: { command: "node", args: [orbitStorage] }
+            }
+        }), "utf-8");
+
+        const originalText = "# Pre-Orbit Instructions\nOriginal user prompt.";
+        const backupPath = `${mockGeminiMd}.bak-2026-10-26T12-00-00-000Z`;
+        fs.writeFileSync(backupPath, originalText, "utf-8");
+        fs.writeFileSync(mockGeminiMd, `${ORBIT_START_MARKER}\nOrbit rules\n${ORBIT_END_MARKER}\n`, "utf-8");
+
+        const res = await runUninstall({
+            appName: "Google Antigravity IDE",
+            mcpConfigPath: ideConfigPath,
+            geminiMdPath: mockGeminiMd,
+            restoreBackup: true,
+        });
+
+        expect(res.success).toBe(true);
+        expect(res.restoredBackup).toBe(true);
+        expect(fs.readFileSync(mockGeminiMd, "utf-8")).toBe(originalText);
+    });
 });
+

@@ -84,10 +84,10 @@ describe("Hardened MCP server tools", () => {
         expect(files[0]).toMatch(/^report_.*\.json$/);
 
         // Verify output path does not contain raw Windows user path
-        expect(parsed.message).not.toContain("C:\\Users\\cesar");
+        expect(parsed.message).not.toContain("C:\\Users\\fixture-user");
     });
 
-    it("orbit_memory ensure_project creates project scaffold with PROTOCOL.md", async () => {
+    it("orbit_memory ensure_project creates project scaffold with PROTOCOL.md (Layout v3)", async () => {
         const result = (await client.callTool({
             name: "orbit_memory",
             arguments: {
@@ -98,10 +98,85 @@ describe("Hardened MCP server tools", () => {
 
         expect(result.content[0].text).toContain("ensured and memory scaffold created");
 
-        const projDir = path.join(mockBrainDir, "alpha_proj");
+        const projDir = path.join(mockBrainDir, "projects", "alpha_proj");
         expect(fs.existsSync(projDir)).toBe(true);
-        expect(fs.existsSync(path.join(projDir, "memories", "PROTOCOL.md"))).toBe(true);
-        expect(fs.existsSync(path.join(projDir, "memories", "INDEX.md"))).toBe(true);
+        expect(fs.existsSync(path.join(projDir, "cartograph"))).toBe(true);
+        expect(fs.existsSync(path.join(projDir, "archive"))).toBe(true);
+        expect(fs.existsSync(path.join(projDir, "memories", "sessions"))).toBe(true);
+        expect(fs.existsSync(path.join(projDir, "memories", "features"))).toBe(true);
+        expect(fs.existsSync(path.join(projDir, "memories", "tasks"))).toBe(true);
+
+        const protocolPath = path.join(projDir, "memories", "PROTOCOL.md");
+        expect(fs.existsSync(protocolPath)).toBe(true);
+        const protocol = fs.readFileSync(protocolPath, "utf-8");
+        expect(protocol).toContain("Topic-Based Memory Protocol (v3.0)");
+
+        const indexPath = path.join(projDir, "memories", "INDEX.md");
+        expect(fs.existsSync(indexPath)).toBe(true);
+        const index = fs.readFileSync(indexPath, "utf-8");
+        expect(index).toContain("Active Topics");
+    });
+
+    it("orbit_memory list_projects inspects projects/ in Layout v3 and legacy root", async () => {
+        // Setup v3 project under projects/
+        const v3Dir = path.join(mockBrainDir, "projects", "v3_app");
+        fs.mkdirSync(v3Dir, { recursive: true });
+
+        // Setup legacy flat project under brain root
+        const legacyDir = path.join(mockBrainDir, "legacy_app", "memories");
+        fs.mkdirSync(legacyDir, { recursive: true });
+
+        const result = (await client.callTool({
+            name: "orbit_memory",
+            arguments: { action: "list_projects" },
+        })) as { content: Array<{ type: string; text: string }> };
+
+        const list = JSON.parse(result.content[0].text) as string[];
+        expect(list).toContain("v3_app");
+        expect(list).toContain("legacy_app");
+    });
+
+    it("orbit_memory cartograph operations route through projects/<key>/cartograph/", async () => {
+        const reportData = { taskId: "task_v3", summary: "Layout v3 test" };
+
+        // 1. Write report
+        const writeRes = (await client.callTool({
+            name: "orbit_memory",
+            arguments: {
+                action: "write_cartograph_report",
+                projectName: "gamma_proj",
+                filename: "report_v3.json",
+                content: JSON.stringify(reportData),
+            },
+        })) as { content: Array<{ type: string; text: string }> };
+        expect(writeRes.content[0].text).toContain("Successfully wrote cartograph report");
+
+        // Verify written to projects/gamma_proj/cartograph/report_v3.json
+        const expectedPath = path.join(mockBrainDir, "projects", "gamma_proj", "cartograph", "report_v3.json");
+        expect(fs.existsSync(expectedPath)).toBe(true);
+
+        // 2. Read report
+        const readRes = (await client.callTool({
+            name: "orbit_memory",
+            arguments: {
+                action: "read_cartograph_report",
+                projectName: "gamma_proj",
+                filename: "report_v3.json",
+            },
+        })) as { content: Array<{ type: string; text: string }> };
+        const readParsed = JSON.parse(readRes.content[0].text);
+        expect(readParsed.taskId).toBe("task_v3");
+
+        // 3. List reports
+        const listRes = (await client.callTool({
+            name: "orbit_memory",
+            arguments: {
+                action: "list_cartograph_reports",
+                projectName: "gamma_proj",
+            },
+        })) as { content: Array<{ type: string; text: string }> };
+        const reports = JSON.parse(listRes.content[0].text);
+        expect(reports.some((r: { filename: string }) => r.filename === "report_v3.json")).toBe(true);
     });
 
     it("orbit_memory write_file rejects denied paths", async () => {
@@ -120,7 +195,7 @@ describe("Hardened MCP server tools", () => {
 
     it("orbit_memory delete_cartograph_report moves file to .trash instead of permanent deletion", async () => {
         // Setup report in project cartograph dir
-        const cartDir = path.join(mockBrainDir, "beta_proj", "cartograph");
+        const cartDir = path.join(mockBrainDir, "projects", "beta_proj", "cartograph");
         fs.mkdirSync(cartDir, { recursive: true });
         const reportPath = path.join(cartDir, "report_001.json");
         fs.writeFileSync(reportPath, JSON.stringify({ taskId: "001" }), "utf-8");

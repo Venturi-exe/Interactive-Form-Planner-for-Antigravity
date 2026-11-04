@@ -206,4 +206,51 @@ describe("Layout v3 brain migration and template initialization", () => {
         const destFiles = fs.readdirSync(destDir);
         expect(destFiles.sort()).toEqual(["report.MyProj.json", "report.json"].sort());
     });
+
+    it("handles pre-existing .migrated file marker without ENOTDIR and completes migration", async () => {
+        // Create an 8-byte .migrated file marker left by legacy migrateFromLegacy()
+        const markerFile = path.join(mockBrainRoot, ".migrated");
+        fs.writeFileSync(markerFile, "migrated\n", "utf-8");
+
+        // Create legacy project folder
+        const projDir = path.join(mockBrainRoot, "SampleApp", "cartograph");
+        fs.mkdirSync(projDir, { recursive: true });
+        fs.writeFileSync(path.join(projDir, "rep.json"), JSON.stringify({ summary: "hello" }));
+
+        const result = await migrateToLayoutV3(mockBrainRoot);
+        expect(result.migrated).toBe(true);
+        expect(result.errors).toEqual([]);
+
+        // .migrated should now be a directory containing the archive
+        expect(fs.statSync(path.join(mockBrainRoot, ".migrated")).isDirectory()).toBe(true);
+        // .migrated-marker should exist preserving the marker
+        expect(fs.existsSync(path.join(mockBrainRoot, ".migrated-marker"))).toBe(true);
+        // Layout version must be created
+        expect(fs.readFileSync(path.join(mockBrainRoot, ".layout-version"), "utf-8").trim()).toBe("3");
+        // SampleApp must have moved to projects/sampleapp and archived from root
+        expect(fs.existsSync(path.join(mockBrainRoot, "projects", "sampleapp", "cartograph", "rep.json"))).toBe(true);
+        expect(fs.existsSync(path.join(mockBrainRoot, "SampleApp"))).toBe(false);
+    });
+
+    it("resumes cleanly when projects/ was already partially populated from an earlier run", async () => {
+        // Pre-create destination in projects/ (as left by an earlier run aborted at Phase 2)
+        const destDir = path.join(mockBrainRoot, "projects", "alreadycopied", "cartograph");
+        fs.mkdirSync(destDir, { recursive: true });
+        fs.writeFileSync(path.join(destDir, "rep.json"), JSON.stringify({ summary: "already copied" }), "utf-8");
+
+        // The legacy root folder still exists because Phase 2 never archived it
+        const srcDir = path.join(mockBrainRoot, "AlreadyCopied", "cartograph");
+        fs.mkdirSync(srcDir, { recursive: true });
+        fs.writeFileSync(path.join(srcDir, "rep.json"), JSON.stringify({ summary: "already copied" }), "utf-8");
+
+        const result = await migrateToLayoutV3(mockBrainRoot);
+        expect(result.migrated).toBe(true);
+        expect(result.errors).toEqual([]);
+
+        // Source must be archived and destination must remain valid
+        expect(fs.existsSync(srcDir)).toBe(false);
+        expect(fs.existsSync(path.join(destDir, "rep.json"))).toBe(true);
+        expect(fs.readFileSync(path.join(mockBrainRoot, ".layout-version"), "utf-8").trim()).toBe("3");
+    });
 });
+

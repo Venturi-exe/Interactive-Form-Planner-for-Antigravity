@@ -1,6 +1,6 @@
 Orbit Personal Use License
 
-Copyright (c) 2026 Orbit/OBT by Venturi-exe / VNTR.CORP https://github.com/Venturi-exe
+Copyright (c) 2026 Orbit/OBT by Venturi-exe / VNTRCORP https://github.com/Venturi-exe
 
 This software is licensed for PERSONAL, NON-COMMERCIAL USE ONLY.
 
