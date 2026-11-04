@@ -1,122 +1,88 @@
 # Orbit
 
-Orbit: Ultimate planning tool for Antigravity.
+Orbit brings planning forms, visual change reports, and persistent project memory to Antigravity IDE.
 
-Orbit provides a complete loop alignment mechanism for AI agents in the Antigravity IDE, closing the gap between user intent and agent execution.
+Publisher: **VNTRCORP**. Extension ID: **VNTRCORP.orbit**. Release: **0.4.1**.
 
-## The Dual-Alignment Philosophy
+## Orbit 0.4.1
 
-1. **Orbit Planner**: Aligns user intent with agent understanding before any code is written or modified (pre-execution alignment).
-2. **Orbit Cartograph**: Aligns agent outputs, decisions, and actual code changes with user understanding after execution is complete (post-execution alignment).
+- **Interactive Setup Wizard**: choose whether to append Orbit rules, replace them after a backup, or integrate manually. Configure the bundled MCP server through the same workflow.
+- **Bounded Planner Slices**: keep forms open across short tool calls, track user and agent activity, and retain submitted answers for retries.
+- **Orbit Cartograph and Orbit Hub**: inspect file changes, decisions, project reports, and timelines in the sidebar or an editor panel.
+- **Sidebar and settings fixes**: preserve navigation after timeout or clarification, restore settings scrolling, and remove obsolete quota controls.
+- **Consistent project keys**: use `_default` for unassigned work and read historical default aliases without renaming existing folders.
 
----
+## Install Orbit
 
-## Architecture and Core Systems
+### Open VSX
 
-### 1. Orbit Planner (Pre-Execution Alignment)
-When a task is ambiguous or presents multiple architectural choices, the bundled `orbit` MCP server automatically triggers an interactive planning form:
-- Reduces token waste by resolving questions and edge cases beforehand.
-- Collects structured inputs (single-choice, multi-choice, and free-text fields).
-- Supports **Deep Prompt Refining** via `@trigger deep prompt refining` to iteratively perfect plans before implementation.
-- IPC v2 Protocol: Form requests are claimed atomically, supporting prompt cancellation and automated failure detection.
-- Generates persistent planning receipts in the persistent Orbit-Brain.
+1. Open Extensions in Antigravity with `Ctrl+Shift+X`.
+2. Search for `VNTRCORP.orbit` and select **Orbit**.
+3. Install the extension and follow the setup wizard.
 
-### 2. Orbit Cartograph (Post-Execution Impact Mapping)
-Once the agent completes its file modifications, it generates an impact report mapping all changes:
-- Displays an interactive post-execution impact map utilizing vendored Cytoscape.js.
-- Outlines every created, modified, moved, or deleted file visually.
-- Details the specific reasons, downstream impacts, and user decisions driving each change.
-- Preserves a dual-persistence history for auditing and recovery.
+[View Orbit on Open VSX](https://open-vsx.org/extension/VNTRCORP/orbit).
 
-### 3. Layout v3 Brain Architecture
-Orbit persists long-term architectural memory across sessions in `~/.orbit-brain/`:
-- Multi-user compliant: Brain root is initialized with private permissions (`0o700`) and individual memory files with (`0o600`).
-- Cross-platform lowercased project keys (`projects/<key>/`) for uniform access across Windows and Linux.
-- 14-day TTL retention in `.trash/`: deletions are safely quarantined rather than permanently unlinked.
-- Advisory cross-process locking (`.locks/`) to prevent race conditions during concurrent agent updates.
+### Manual VSIX
 
-### 4. Non-Destructive IDE Integration
-- Marker-bounded rules injection: Orbit injects its agent rules into `GEMINI.md` within explicit versioned HTML comment markers (`<!-- ORBIT_RULES_V1_START -->` and `<!-- ORBIT_RULES_V1_END -->`), preserving all custom user instructions.
-- Stable MCP server runtime: Bundled server is maintained at a stable path inside `globalStorageUri`, keeping tool registrations active across extension updates.
-- Automated clean uninstall: Automatically removes the MCP server registration and Orbit rules markers upon extension uninstallation.
+1. Obtain `orbit-0.4.1.vsix` from the release package.
+2. Open Extensions, select the `...` menu, then **Install from VSIX**.
+3. Select the package and reload Antigravity when prompted.
+4. Run **Orbit: Run Setup Wizard** if setup has not completed.
 
----
+The extension preserves custom assistant instructions when you choose append or manual integration. Review the wizard's choices before replacing an existing rules file.
 
-## Installation
+## Orbit Planner
 
-### Primary Method: Open VSX (Recommended)
-This extension is published to Open VSX and is integrated into Antigravity:
-1. Open the **Extensions** sidebar in Antigravity (`Ctrl+Shift+X`).
-2. Search for `Orbit` or `VNTRCORP.orbit`.
-3. Click **Install**.
+The bundled `orbit` MCP server exposes `orbit_planner`, `orbit_memory`, and `write_impact_report`. Orbit Planner displays single-choice, multiple-choice, and text fields for decisions that need user input.
 
-The extension automatically configures your agent rules and MCP server on first launch.
+Calls use bounded waiting slices. If a reply contains `action: "pending"`, continue the same request with `orbit_planner({ resumeRequestId })`. A pending reply is not permission to start dependent changes. Submitted answers remain available for 30 minutes.
 
-### Secondary Method: Manual Installation
-1. Download the latest `.vsix` release.
-2. In Antigravity: Extensions > `...` > **Install from VSIX**.
+Use `@trigger deep prompt refining` to request iterative planning with the **Execute Plan** button. Follow the active assistant's rules for clarification, timeout, and cancellation.
 
----
+## Orbit Cartograph and Orbit Hub
 
-## Orbit Memory System Setup (Orbit-Brain)
+Cartograph maps file changes and their reasons. Select a report or graph node to inspect paths, decisions, planning notes, and timelines. Orbit Hub adds project browsing, search, comparison, and report operations. Report removal uses recoverable trash.
 
-The Orbit Memory System is a local, persistent knowledge and operating layer stored in your home directory (`~/.orbit-brain/`). It acts as a long-term memory for your AI agent, preserving architectural decisions, environments, and preferences across coding sessions.
+Open the Hub with **Orbit: Open Cartograph Hub**. Use **Orbit: Open Cartograph in Main Tab** for an editor view or **Orbit: Maximize Panel View** for the combined view.
 
-### Configure Your Orbit-Brain
+## Orbit Brain
 
-To configure your personalized Orbit-Brain using all your prior project history, previous agent sessions, planning receipts, and IDE logs, copy the configuration prompt below and paste it into the agent chat in Antigravity.
-
-#### Orbit-Brain Configuration Prompt
+Orbit stores project context under `~/.orbit-brain/` using Layout v3:
 
 ```text
-You are an expert AI software engineer and system architect. Your goal is to fully bootstrap and configure my local persistent memory system, known as "Orbit-Brain," which is stored at the root `~/.orbit-brain/`.
-
-To make my Orbit-Brain completely customized for my actual projects, workflows, preferences, and workspace history, you must perform a comprehensive deep search and analysis of my prior work. Follow this step-by-step plan:
-
-1. Locate Workspace History and IDE Data
-   - Identify active workspace folders and currently open projects.
-   - Search the local filesystem for the Antigravity App Data directory (typically under `~/.gemini/antigravity-ide`).
-   - In that App Data folder, locate the `brain/` directory. This directory contains directories named with past conversation IDs, each containing files like `task.md`, `implementation_plan.md`, `walkthrough.md`, `scratch/` files, and `.system_generated/logs/transcript.jsonl`.
-   - Locate global agent config files in the home directory or workspace, such as `~/.gemini/GEMINI.md`.
-
-2. Deep Scan and Extract Context
-   - Scan the project codebases in the current workspace to identify their tech stacks, main APIs, design languages, coding styles, and dependency trees.
-   - Scan the past conversation folders and transcript files under the IDE brain folder. Retrieve details about:
-     - Key architectural decisions and why they were made.
-     - Challenging bugs, gotchas, and how they were resolved.
-     - My developer persona, coding style preferences, tools used, and naming conventions.
-     - Core system constraints and rules established in `GEMINI.md`.
-     - Summarized session outputs, notes, and temporary scratchpad scripts.
-
-3. Synthesize and Organize My Context
-   - Group the extracted data by project (matching active workspace folders, lowercasing project keys).
-   - Define my core workflows, preferences, environment variables, recurring tasks, and technology targets.
-
-4. Initialize the Orbit-Brain Architecture
-   - Ensure the central brain root is mapped to the standard user Orbit-Brain path (`~/.orbit-brain/`).
-   - Create and populate the global coordination files:
-     - `BRAIN_ARCHITECTURE.md`: Detailing the directory tree structure and the Coherence and Maintenance Protocol for keeping the brain in sync.
-     - `global_context_summary.md`: Documenting the global environment setup (OS, shell, browser, package managers, tools) and my personalized developer profile.
-     - `skills_reference.md`: Mapping specialized framework prefixes, skill rules, or custom instructions.
-
-5. Generate Project-Specific Knowledge Layers
-   - For each project directory registered in the brain (under `projects/<project_key>/`), establish the Layout v3 memory structures:
-     - `memories/INDEX.md`: A mapped catalog linking concepts, tags, and past session summaries to specific memory observation files.
-     - `memories/PROTOCOL.md`: The rule system dictating how observations must be captured and logged in the session directory.
-     - `memories/sessions/`: Timestamped observation logs and historical session summaries.
-     - `memories/features/` and `memories/tasks/`: Granular feature and task context.
-     - `cartograph/`: Canonical repository impact and architecture reports.
-     - `archive/`: Historical context and deprecated notes.
-
-6. Verification and Final Report
-   - Run verification checks to ensure all directories and files are successfully generated.
-   - Output a detailed directory layout of the generated Orbit-Brain.
-   - Provide a concise summary of the project profiles, concepts, and historical facts you extracted and initialized.
-   - Explain how I can easily maintain this brain going forward (such as by running the "update memory system" command at the end of sessions).
-
-Begin your research now by locating and scanning my current workspace folders and the Antigravity App Data `brain/` directory, then bootstrap the entire Orbit-Brain system!
+projects/<project-key>/
+  cartograph/
+  archive/
+  memories/
+    INDEX.md
+    PROTOCOL.md
+    sessions/
+    features/
+    tasks/
 ```
 
----
+Environment recording is disabled by default. Setup and removal honor the calling editor's storage ownership so stock VS Code and Antigravity integrations can be handled separately.
 
-*Note: This extension is designed exclusively for the Antigravity IDE and is published on Open VSX.*
+- [Full Orbit Brain setup and assistant bootstrap prompt](docs/ORBIT_BRAIN_SETUP.md)
+- [Commands and interaction cheatsheet](docs/COMMANDS_AND_CHEATSHEET.md)
+
+Chat phrases such as `@brain` are assistant workflow instructions supplied by the installed rules, rather than standalone editor commands. For a custom assistant prompt, use **Orbit: View Integration Specification** or **Orbit: Copy Assistant Rules to Clipboard**.
+
+## Development and packaging
+
+```powershell
+npm ci
+npm run typecheck
+npx vitest run
+npx eslint src/
+node esbuild.js --production
+npx @vscode/vsce package --no-dependencies -o dist/orbit-0.4.1.vsix
+node scripts/check-vsix.mjs dist/orbit-0.4.1.vsix
+node scripts/smoke-vsix.mjs dist/orbit-0.4.1.vsix
+```
+
+The production build bundles the extension, MCP server, uninstall hook, and React webviews. `form.js` is maintained as plain JavaScript. Packaging excludes sourcemaps, tests, scripts, and personal memory data. The smoke check starts the packaged MCP server with an isolated brain directory.
+
+## License
+
+Orbit is licensed for personal, non-commercial use under [LICENSE.txt](LICENSE.txt). First-party attribution: **Venturi-exe / VNTRCORP**. Third-party notices are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

@@ -4,6 +4,8 @@ assets/tab-hub.png
 assets/tab-planner.png
 assets/tab-settings.png
 LICENSE.txt
+docs/COMMANDS_AND_CHEATSHEET.md
+docs/ORBIT_BRAIN_SETUP.md
 media/brain-template/BRAIN_ARCHITECTURE.md
 media/brain-template/global_context_summary.md
 media/brain-template/projects/_default/INDEX.md

@@ -16,12 +16,16 @@
 !README.md
 !LICENSE.txt
 !THIRD_PARTY_NOTICES.md
+!docs/ORBIT_BRAIN_SETUP.md
+!docs/COMMANDS_AND_CHEATSHEET.md
 **/*.map
 out/**/*.map
 src/**/*.map
 scripts/**
 tests/**
 archive/**
+**/scratch/**
+**/scratchpads/**
 node_modules/**
 assets/*.gif
 assets/*.mp4

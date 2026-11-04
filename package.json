@@ -2,7 +2,7 @@
   "name": "orbit",
   "displayName": "Orbit",
   "description": "Orbit : Ultimate planning tool for antigravity.",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "publisher": "VNTRCORP",
   "icon": "assets/icon.png",
   "license": "SEE LICENSE IN LICENSE.txt",
@@ -138,13 +138,22 @@
       "properties": {
         "orbit.setup.mode": {
           "type": "string",
-          "enum": ["interactive", "auto", "ask", "off"],
+          "enum": [
+            "interactive",
+            "auto",
+            "ask",
+            "off"
+          ],
           "default": "interactive",
           "description": "Setup mode on first run: 'interactive' prompts the setup wizard, 'auto' configures defaults without prompting, 'ask' prompts confirmation, 'off' disables setup."
         },
         "orbit.trackWorkspace": {
           "type": "string",
-          "enum": ["always", "ask", "never"],
+          "enum": [
+            "always",
+            "ask",
+            "never"
+          ],
           "default": "always",
           "description": "Whether to automatically map and track workspace projects in Orbit Brain."
         },
@@ -184,7 +193,7 @@
     "watch": "node esbuild.js --watch",
     "package": "npx @vscode/vsce package --no-dependencies",
     "package:all": "node scripts/package-all.mjs",
-    "vscode:prepublish": "node esbuild.js --production && npm run typecheck && npm run lint && npm test",
+    "vscode:prepublish": "npm run typecheck && npm run lint && npm test && node esbuild.js --production",
     "vscode:uninstall": "node ./out/uninstall.js"
   },
   "devDependencies": {
