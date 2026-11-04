@@ -18,6 +18,7 @@ import '@xyflow/react/dist/style.css';
 import CustomNode, { CustomNodeData } from './CustomNode';
 import { Inspector } from './Inspector';
 import { Toolbar } from './Toolbar';
+import { DEFAULT_PROJECT_KEY, normalizeProjectKey } from '../../core/projectKey';
 import {
   getCompoundElements,
   getMergedElements,
@@ -69,9 +70,9 @@ export const CartographApp = () => {
   const projectGroups = React.useMemo(() => {
     const groups = new Map<string, { label: string; reports: ImpactReport[] }>();
     for (const r of reportsHistory) {
-      const key = r.projectName ?? 'default';
+      const key = normalizeProjectKey(r.projectName);
       if (!groups.has(key)) {
-        const label = key === 'default' ? 'Default'
+        const label = key === DEFAULT_PROJECT_KEY ? 'Default'
           : key.split('/').map(part => part.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())).join(' > ');
         groups.set(key, { label, reports: [] });
       }
@@ -84,20 +85,20 @@ export const CartographApp = () => {
     if (!activeReportId) return reportsHistory[0];
     if (activeReportId.startsWith('merge:')) {
       const projKey = activeReportId.split(':')[1];
-      return reportsHistory.find(r => (r.projectName ?? 'default') === projKey) || reportsHistory[0];
+      return reportsHistory.find(r => (normalizeProjectKey(r.projectName)) === projKey) || reportsHistory[0];
     }
     return reportsHistory.find(r => r.taskId === activeReportId) || reportsHistory[0];
   }, [reportsHistory, activeReportId]);
 
-  const activeProjectId = activeReport?.projectName ?? 'default';
+  const activeProjectId = normalizeProjectKey(activeReport?.projectName);
   const activeProjectLabel = React.useMemo(() => {
     const key = activeProjectId;
-    return key === 'default' ? 'Default'
+    return key === DEFAULT_PROJECT_KEY ? 'Default'
       : key.split('/').map(part => part.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())).join(' > ');
   }, [activeProjectId]);
 
   const projectReports = React.useMemo(() => {
-    return reportsHistory.filter(r => (r.projectName ?? 'default') === activeProjectId);
+    return reportsHistory.filter(r => (normalizeProjectKey(r.projectName)) === activeProjectId);
   }, [reportsHistory, activeProjectId]);
 
   const [undoStack, setUndoStack] = useState<{ nodes: Node[]; edges: Edge[] }[]>([]);
@@ -107,7 +108,7 @@ export const CartographApp = () => {
   const { fitView } = useReactFlow();
 
   const pushToUndo = useCallback((currentNodes: Node[], currentEdges: Edge[]) => {
-    setUndoStack((prev) => [...prev, { nodes: currentNodes, edges: currentEdges }]);
+    setUndoStack((prev) => [...prev.slice(-49), { nodes: currentNodes, edges: currentEdges }]);
     setRedoStack([]);
   }, []);
 
@@ -127,7 +128,7 @@ export const CartographApp = () => {
     if (undoStack.length === 0) return;
     const previous = undoStack[undoStack.length - 1];
     setUndoStack((prev) => prev.slice(0, -1));
-    setRedoStack((prev) => [...prev, { nodes, edges }]);
+    setRedoStack((prev) => [...prev.slice(-49), { nodes, edges }]);
     setNodes(previous.nodes);
     setEdges(previous.edges);
   }, [undoStack, nodes, edges, setNodes, setEdges]);
@@ -136,7 +137,7 @@ export const CartographApp = () => {
     if (redoStack.length === 0) return;
     const next = redoStack[redoStack.length - 1];
     setRedoStack((prev) => prev.slice(0, -1));
-    setUndoStack((prev) => [...prev, { nodes, edges }]);
+    setUndoStack((prev) => [...prev.slice(-49), { nodes, edges }]);
     setNodes(next.nodes);
     setEdges(next.edges);
   }, [redoStack, nodes, edges, setNodes, setEdges]);
@@ -155,7 +156,7 @@ export const CartographApp = () => {
 
     if (reportId.startsWith('merge:')) {
       const projectName = reportId.split(':')[1];
-      const projectReports = history.filter(r => (r.projectName ?? 'default') === projectName);
+      const projectReports = history.filter(r => (normalizeProjectKey(r.projectName)) === projectName);
       const elements = getMergedElements(projectReports, collapsed);
       rawNodes = elements.nodes;
       rawEdges = elements.edges;

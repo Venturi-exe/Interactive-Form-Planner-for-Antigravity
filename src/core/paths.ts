@@ -1,5 +1,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
+import { DEFAULT_PROJECT_KEY, normalizeProjectKey } from './projectKey.js';
+export { normalizeProjectKey } from './projectKey.js';
 
 const WINDOWS_RESERVED = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?$/i;
 
@@ -121,43 +123,6 @@ export function resolveInside(rootDir: string, relPath: string): string {
 }
 
 /**
- * Normalizes any string into a valid, safe project key.
- * Converts to lowercase, replaces invalid characters with underscores,
- * maps 'default' to '_default', and guarantees a safe key.
- */
-export function normalizeProjectKey(key: string): string {
-  if (typeof key !== 'string' || !key.trim()) {
-    return '_default';
-  }
-
-  const lower = key.trim().toLowerCase();
-  if (lower === 'default' || lower === '_default' || lower === '[default]') {
-    return '_default';
-  }
-
-  // Replace invalid characters with underscore, collapse consecutive underscores
-  let cleaned = lower.replace(/[^a-z0-9._-]/g, '_').replace(/_+/g, '_');
-  // N-05: Strip leading and trailing dots, dashes, and underscores
-  cleaned = cleaned.replace(/^[._-]+|[._-]+$/g, '');
-
-  if (cleaned === 'default' || cleaned === '_default') {
-    return '_default';
-  }
-
-  // N-05: Guard against Windows reserved device names (con, prn, aux, nul, com1-9, lpt1-9)
-  if (WINDOWS_RESERVED.test(cleaned)) {
-    cleaned = `project_${cleaned}`;
-  }
-
-  // N-05: Enforce that the result matches ^[a-z0-9][a-z0-9._-]*$
-  if (!cleaned || !/^[a-z0-9]/.test(cleaned)) {
-    return '_default';
-  }
-
-  return cleaned.slice(0, 128);
-}
-
-/**
  * Validates and normalizes project keys.
  * Lowercases input per project key casing convention. Maps default variants to _default. Throws on invalid or reserved prefixes.
  */
@@ -202,6 +167,24 @@ export function getProjectDir(brainRoot: string, key: string): string {
     }
   } catch { /* skip */ }
   return v3Path;
+}
+
+/** Existing project directories in read order, including historical default aliases. */
+export function getProjectReadDirs(brainRoot: string, key: string): string[] {
+  const normalized = normalizeProjectKey(key);
+  const keys = normalized === DEFAULT_PROJECT_KEY
+    ? [DEFAULT_PROJECT_KEY, 'default', 'Default', '[Default]'] : [normalized];
+  const directories = new Map<string, string>();
+  for (const prefix of ['projects', '']) {
+    for (const alias of keys) {
+      const directory = resolveInside(brainRoot, path.join(prefix, alias));
+      if (fs.existsSync(directory) && fs.statSync(directory).isDirectory()) {
+        const identity = process.platform === 'win32' ? directory.toLowerCase() : directory;
+        directories.set(identity, directories.get(identity) ?? directory);
+      }
+    }
+  }
+  return [...directories.values()];
 }
 
 /**

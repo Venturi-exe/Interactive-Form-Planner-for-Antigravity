@@ -11,6 +11,26 @@
     const vscode = acquireVsCodeApi();
     window.vscode = vscode;
 
+    window.addEventListener("error", (event) => {
+        vscode.postMessage({
+            type: "webview_error",
+            kind: "error",
+            message: String(event.message || "Uncaught script error").slice(0, 2000),
+            stack: String(event.error?.stack || "").slice(0, 4000),
+            source: String(event.filename || "").slice(0, 1000),
+            line: event.lineno,
+            column: event.colno,
+        });
+    });
+    window.addEventListener("unhandledrejection", (event) => {
+        vscode.postMessage({
+            type: "webview_error",
+            kind: "unhandledrejection",
+            message: String(event.reason?.message || event.reason || "Unhandled promise rejection").slice(0, 2000),
+            stack: String(event.reason?.stack || "").slice(0, 4000),
+        });
+    });
+
     const emptyState = document.getElementById("empty-state");
     const formContent = document.getElementById("form-content");
 
@@ -194,7 +214,7 @@
         const dismissBtn = document.createElement("button");
         dismissBtn.type = "button";
         dismissBtn.className = "dismiss-btn";
-        dismissBtn.textContent = "Skip - proceed with what you already have";
+        dismissBtn.textContent = "Dismiss";
         dismissBtn.addEventListener("click", handleDismiss);
         actions.appendChild(dismissBtn);
 
@@ -724,7 +744,7 @@
         }
 
         // Disable all buttons in the form to prevent double-submit
-        const buttons = document.querySelectorAll("button");
+        const buttons = formContent.querySelectorAll("button");
         buttons.forEach((btn) => { btn.disabled = true; });
         if (input) input.disabled = true;
 
@@ -818,7 +838,7 @@
     function handleTimeout() {
         stopInactivityTimer();
         
-        const buttons = document.querySelectorAll("button");
+        const buttons = formContent.querySelectorAll("button");
         buttons.forEach((btn) => { btn.disabled = true; });
         
         vscode.postMessage({

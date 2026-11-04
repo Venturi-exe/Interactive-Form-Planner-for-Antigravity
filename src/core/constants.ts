@@ -27,7 +27,7 @@ export const BRAIN_DIRS = {
 
 // Project Subdirectory Structure (Layout v3)
 export const PROJECT_DIRS = {
-    REPORTS: "reports",
+    REPORTS: "cartograph",
     MEMORIES: "memories",
     SESSIONS: "memories/sessions",
     FEATURES: "memories/features",
@@ -47,7 +47,7 @@ export const IPC_DIRS = {
 } as const;
 
 // Default Project Key for unassigned reports or global activities
-export const DEFAULT_PROJECT_KEY = "_default";
+export { DEFAULT_PROJECT_KEY } from "./projectKey.js";
 
 // Global Brain Files
 export const GLOBAL_FILES = {

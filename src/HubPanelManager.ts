@@ -34,7 +34,7 @@ export class HubPanelManager {
 
     const panel = vscode.window.createWebviewPanel(
       'orbit.hub',
-      'Cartograph Hub',
+      'Orbit Hub',
       vscode.ViewColumn.Active,
       {
         enableScripts: true,
@@ -400,7 +400,7 @@ export class HubPanelManager {
                    img-src ${webview.cspSource} data:;
                    script-src 'nonce-${nonce}';">
     <link rel="stylesheet" href="${cssUri}">
-    <title>Cartograph Hub</title>
+    <title>Orbit Hub</title>
 </head>
 <body>
     <div id="hub-root"></div>

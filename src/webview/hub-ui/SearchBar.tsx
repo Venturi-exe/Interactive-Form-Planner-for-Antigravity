@@ -63,7 +63,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({
             <rect x="3" y="14" width="7" height="7" rx="1" />
             <rect x="14" y="14" width="7" height="7" rx="1" />
           </svg>
-          <h1>CARTOGRAPH HUB</h1>
+          <h1>Orbit Hub</h1>
         </div>
 
         {/* Global actions */}

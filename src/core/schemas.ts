@@ -115,6 +115,15 @@ export type ClarificationItem = z.infer<typeof ClarificationItemSchema>;
 // Form Webview Incoming Message Schema
 export const FormWebviewMessageSchema = z.discriminatedUnion("type", [
     z.object({ type: z.literal("webview_ready") }),
+    z.object({
+        type: z.literal("webview_error"),
+        kind: z.enum(["error", "unhandledrejection"]),
+        message: z.string().max(2000),
+        stack: z.string().max(4000).optional(),
+        source: z.string().max(1000).optional(),
+        line: z.number().optional(),
+        column: z.number().optional(),
+    }),
     z.object({ type: z.literal("restore_sidebar") }),
     z.object({ type: z.literal("open_hub") }),
     z.object({ type: z.literal("tab_changed"), tab: z.string().optional() }),

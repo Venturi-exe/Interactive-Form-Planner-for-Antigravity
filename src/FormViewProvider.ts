@@ -14,6 +14,8 @@ import type { AlignmentFormRequest, FormResult } from "./types.js";
 import { FormWebviewMessageSchema } from "./core/schemas.js";
 import { OrbitBrain } from "./OrbitBrain.js";
 import { HubPanelManager } from "./HubPanelManager.js";
+import { getProjectReadDirs, normalizeProjectKey } from "./core/paths.js";
+import { DEFAULT_PROJECT_KEY } from "./core/projectKey.js";
 
 /**
  * Provides the sidebar webview panel for rendering planning forms.
@@ -86,7 +88,7 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
         webviewView.webview.html = this._getHtmlForWebview(webviewView.webview, "combined", false);
 
         // Listen for messages from the webview
-        webviewView.webview.onDidReceiveMessage((message) => {
+        const messageDisposable = webviewView.webview.onDidReceiveMessage((message) => {
             this._handleWebviewMessage(message);
         });
 
@@ -114,7 +116,9 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
         });
 
         webviewView.onDidDispose(() => {
+            messageDisposable.dispose();
             configDisposable.dispose();
+            if (this._view === webviewView) this._view = undefined;
         });
     }
 
@@ -128,6 +132,11 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
             return;
         }
         const message = parsed.data;
+
+        if (message.type === "webview_error") {
+            console.error("[Orbit webview]", message);
+            return;
+        }
 
         if (message.type === "webview_ready") {
             const targetWebview = sourcePanel ? sourcePanel.webview : this._view?.webview;
@@ -183,7 +192,12 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
         }
 
         if (message.type === "open_hub") {
-            HubPanelManager.openHubPanel(this._context, this._orbitBrain!);
+            if (!this._orbitBrain) {
+                console.error("[Orbit] Cannot open Hub: Orbit Brain is unavailable.");
+                vscode.window.showErrorMessage("Orbit Brain is unavailable. Reload the window and try again.");
+                return;
+            }
+            HubPanelManager.openHubPanel(this._context, this._orbitBrain);
             return;
         }
 
@@ -237,14 +251,14 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
         }
 
         if (message.type === "open_receipt") {
-            const projectName = message.projectName || "Default";
+            const projectName = normalizeProjectKey(message.projectName);
             const taskId = message.taskId;
             this._openPlanningReceipt(projectName, taskId);
             return;
         }
 
         if (message.type === "open_walkthrough") {
-            const projectName = message.projectName || "Default";
+            const projectName = normalizeProjectKey(message.projectName);
             const taskId = message.taskId;
             this._openTaskWalkthrough(projectName, taskId);
             return;
@@ -357,10 +371,10 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
         const homeDir = os.homedir();
         const orbitBrainDir = process.env.ORBIT_BRAIN_DIR || path.join(homeDir, ".orbit-brain");
         
-        const locations = [
-            path.join(orbitBrainDir, projectName),
-            path.join(orbitBrainDir, "projects", projectName),
-        ];
+        const locations = getProjectReadDirs(orbitBrainDir, projectName).flatMap(directory => [
+            directory,
+            path.join(directory, "archive", "planning-receipts"),
+        ]);
 
         let matchedFile: string | null = null;
         for (const loc of locations) {
@@ -496,6 +510,7 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
      * and broadcasts it to the active webview panel.
      */
     public async pushImpactReport(report: any): Promise<void> {
+        report = { ...report, projectName: normalizeProjectKey(report.projectName) };
         // Exclude duplicate task ids from session history
         this._sessionReports = this._sessionReports.filter((r) => r.taskId !== report.taskId);
         
@@ -531,7 +546,7 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
         // Write persistently inside Orbit Brain per-project cartograph
         if (this._orbitBrain) {
             try {
-                this._orbitBrain.writeCartographReport(report.projectName || "Default", report);
+                this._orbitBrain.writeCartographReport(normalizeProjectKey(report.projectName), report);
             } catch (err) {
                 console.error("Failed to write to orbit-brain cartograph storage:", err);
             }
@@ -543,6 +558,7 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
      * without any filesystem or globalState persistence.
      */
     public async pushTestReport(report: any): Promise<void> {
+        report = { ...report, projectName: normalizeProjectKey(report.projectName) };
         // Add to session reports for active previewing
         this._sessionReports = this._sessionReports.filter((r) => r.taskId !== report.taskId);
         this._sessionReports.unshift(report);
@@ -576,7 +592,7 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
                 const reports = this._orbitBrain.listCartographReports(projectName);
                 const found = reports.find(r => r.report.taskId === taskId);
                 if (found) {
-                    found.report.projectName = projectName;
+                    found.report.projectName = normalizeProjectKey(projectName);
                     found.report.filename = found.filename;
                     
                     // Inject into session reports
@@ -683,7 +699,7 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
                    script-src 'nonce-${nonce}';">
     <link rel="stylesheet" href="${cssUri}">
     <link rel="stylesheet" href="${cartographCssUri}">
-    <title>Interactive Planner</title>
+    <title>${viewMode === "cartograph" ? "Orbit Cartograph" : "Orbit Planner"}</title>
 </head>
 <body class="${isPanel ? "is-panel" : ""}">
     ${isPanel ? `
@@ -741,6 +757,7 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
                         <circle cx="6" cy="18" r="3"/>
                         <path d="M6 9v6M21 15v-3a4 4 0 00-4-4H9"/>
                     </svg>
+                </button>
                 <button id="btn-close-report" class="toolbar-btn" title="Close Diagram" style="display: none;">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -834,12 +851,13 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
         panel.webview.html = this._getHtmlForWebview(panel.webview, viewMode, true);
 
         // Listen for messages from the editor panel
-        panel.webview.onDidReceiveMessage((message) => {
+        const messageDisposable = panel.webview.onDidReceiveMessage((message) => {
             this._handleWebviewMessage(message, panel);
         });
 
         // Clean up when panel is disposed
         panel.onDidDispose(() => {
+            messageDisposable.dispose();
             this._panels = this._panels.filter(p => p.panel !== panel);
         });
 
@@ -870,19 +888,20 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
         }
 
         let history = this._context.globalState.get<any[]>("orbit.impactHistory", []);
+        const knownReports = [...new Map([...history, ...this._sessionReports].map(r => [r.taskId, r])).values()];
         const toDelete: any[] = [];
 
         if (projectName) {
-            history.forEach(r => {
-                const key = r.projectName ?? 'default';
-                if (key === projectName) {
+            knownReports.forEach(r => {
+                const key = normalizeProjectKey(r.projectName);
+                if (key === normalizeProjectKey(projectName)) {
                     toDelete.push(r);
                 }
             });
-            history = history.filter(r => (r.projectName ?? 'default') !== projectName);
-            this._sessionReports = this._sessionReports.filter(r => (r.projectName ?? 'default') !== projectName);
+            history = history.filter(r => normalizeProjectKey(r.projectName) !== normalizeProjectKey(projectName));
+            this._sessionReports = this._sessionReports.filter(r => normalizeProjectKey(r.projectName) !== normalizeProjectKey(projectName));
         } else if (sessionId) {
-            history.forEach(r => {
+            knownReports.forEach(r => {
                 if (r.sessionId === sessionId) {
                     toDelete.push(r);
                 }
@@ -890,7 +909,7 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
             history = history.filter(r => r.sessionId !== sessionId);
             this._sessionReports = this._sessionReports.filter(r => r.sessionId !== sessionId);
         } else if (taskId) {
-            history.forEach(r => {
+            knownReports.forEach(r => {
                 if (r.taskId === taskId) {
                     toDelete.push(r);
                 }
@@ -906,10 +925,10 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
         if (this._orbitBrain) {
             try {
                 for (const r of toDelete) {
-                    const projName = r.projectName || "Default";
+                    const projName = normalizeProjectKey(r.projectName);
                     const safeTaskId = r.taskId.replace(/[^a-zA-Z0-9\-_]/g, "_");
                     const safeTimestamp = r.timestamp.replace(/[^a-zA-Z0-9\-_]/g, "_");
-                    const filename = `${safeTaskId}_${safeTimestamp}.json`;
+                    const filename = r.filename || `${safeTaskId}_${safeTimestamp}.json`;
                     this._orbitBrain.deleteCartographReport(projName, filename);
                 }
             } catch (err) {
@@ -958,6 +977,7 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
         // Listen for messages from the settings page
         panel.webview.onDidReceiveMessage(async (message) => {
             if (message.type === "update_setting") {
+                if (!["inactivityTimeout", "countdownWarningThreshold", "zoomSensitivity", "detailPanelHeight"].includes(message.key)) return;
                 const settings = context.globalState.get<any>("orbit.settings", {});
                 settings[message.key] = message.value;
                 await context.globalState.update("orbit.settings", settings);
@@ -968,12 +988,7 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
                         inactivityTimeout: settings.inactivityTimeout ?? 5,
                         countdownWarningThreshold: settings.countdownWarningThreshold ?? 60,
                         zoomSensitivity: settings.zoomSensitivity ?? 0.15,
-                        detailPanelHeight: settings.detailPanelHeight ?? 160,
-                        quotaRefreshRate: settings.quotaRefreshRate ?? 90,
-                        quotaWarningThreshold: settings.quotaWarningThreshold ?? 40,
-                        quotaCriticalThreshold: settings.quotaCriticalThreshold ?? 20,
-                        quotaGaugeStyle: settings.quotaGaugeStyle ?? "circular-segmented",
-                        quotaHistoryRangeDays: settings.quotaHistoryRangeDays ?? 7
+                        detailPanelHeight: settings.detailPanelHeight ?? 160
                     }
                 };
 
@@ -1004,8 +1019,8 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
                     if (this._orbitBrain) {
                         try {
                             const projects = this._orbitBrain.listProjects();
-                            if (!projects.includes("Default")) {
-                                projects.push("Default");
+                            if (!projects.includes(DEFAULT_PROJECT_KEY)) {
+                                projects.push(DEFAULT_PROJECT_KEY);
                             }
                             for (const proj of projects) {
                                 const reports = this._orbitBrain.listCartographReports(proj);
@@ -1064,11 +1079,6 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
         const warningSeconds = settings.countdownWarningThreshold ?? 60;
         const zoomSensitivity = settings.zoomSensitivity ?? 0.15;
         const detailPanelHeight = settings.detailPanelHeight ?? 160;
-        const quotaRefreshRate = settings.quotaRefreshRate ?? 90;
-        const quotaWarningThreshold = settings.quotaWarningThreshold ?? 40;
-        const quotaCriticalThreshold = settings.quotaCriticalThreshold ?? 20;
-        const quotaGaugeStyle = settings.quotaGaugeStyle ?? "circular-segmented";
-        const quotaHistoryRangeDays = settings.quotaHistoryRangeDays ?? 7;
 
         const geminiMode = context.globalState.get<string>("orbit.geminiIntegrationMode", "not-configured");
         const modeLabels: Record<string, string> = {
@@ -1160,71 +1170,6 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
         </div>
 
         <div class="settings-section">
-            <h2 class="section-title">Orbit Quota Monitoring</h2>
-            
-            <div class="setting-item">
-                <div class="setting-info">
-                    <label for="input-quota-refresh" class="setting-label">Background Polling Interval (seconds)</label>
-                    <span class="setting-description">Time between automated status checks and quota updates.</span>
-                </div>
-                <div class="setting-control">
-                    <input type="range" id="input-quota-refresh" min="10" max="600" step="5" value="${quotaRefreshRate}" class="slider-input">
-                    <span id="value-quota-refresh" class="slider-value-display">${quotaRefreshRate}</span>
-                </div>
-            </div>
-
-            <div class="setting-item">
-                <div class="setting-info">
-                    <label for="input-quota-warning" class="setting-label">Warning Threshold (%)</label>
-                    <span class="setting-description">Quota remaining percentage threshold below which indicators turn yellow.</span>
-                </div>
-                <div class="setting-control">
-                    <input type="range" id="input-quota-warning" min="0" max="100" value="${quotaWarningThreshold}" class="slider-input">
-                    <span id="value-quota-warning" class="slider-value-display">${quotaWarningThreshold}</span>
-                </div>
-            </div>
-
-            <div class="setting-item">
-                <div class="setting-info">
-                    <label for="input-quota-critical" class="setting-label">Critical Threshold (%)</label>
-                    <span class="setting-description">Quota remaining percentage threshold below which critical alerts fire.</span>
-                </div>
-                <div class="setting-control">
-                    <input type="range" id="input-quota-critical" min="0" max="100" value="${quotaCriticalThreshold}" class="slider-input">
-                    <span id="value-quota-critical" class="slider-value-display">${quotaCriticalThreshold}</span>
-                </div>
-            </div>
-
-            <div class="setting-item">
-                <div class="setting-info">
-                    <label for="input-quota-history" class="setting-label">Burn Rate History Window (days)</label>
-                    <span class="setting-description">Number of days of persistent logs to retain for burn rate calculation.</span>
-                </div>
-                <div class="setting-control">
-                    <input type="range" id="input-quota-history" min="1" max="30" value="${quotaHistoryRangeDays}" class="slider-input">
-                    <span id="value-quota-history" class="slider-value-display">${quotaHistoryRangeDays}</span>
-                </div>
-            </div>
-
-            <div class="setting-item">
-                <div class="setting-info">
-                    <label for="select-quota-gauge" class="setting-label">Remaining Gauge Style</label>
-                    <span class="setting-description">Visual representation of remaining percentages in the sidebar.</span>
-                </div>
-                <div class="setting-control">
-                    <select id="select-quota-gauge" class="select-input">
-                        <option value="circular-segmented" ${quotaGaugeStyle === "circular-segmented" ? "selected" : ""}>Circular Segmented</option>
-                        <option value="circular-plain" ${quotaGaugeStyle === "circular-plain" ? "selected" : ""}>Circular Plain</option>
-                        <option value="horizontal-bar" ${quotaGaugeStyle === "horizontal-bar" ? "selected" : ""}>Horizontal Bar</option>
-                        <option value="vertical-bar" ${quotaGaugeStyle === "vertical-bar" ? "selected" : ""}>Vertical Bar</option>
-                        <option value="segmented-horizontal-bar" ${quotaGaugeStyle === "segmented-horizontal-bar" ? "selected" : ""}>Segmented Horizontal Bar</option>
-                        <option value="segmented-vertical-bar" ${quotaGaugeStyle === "segmented-vertical-bar" ? "selected" : ""}>Segmented Vertical Bar</option>
-                    </select>
-                </div>
-            </div>
-        </div>
-
-        <div class="settings-section">
             <h2 class="section-title">Setup, Integration & Lifecycle</h2>
             <div class="setting-item">
                 <div class="setting-info">
@@ -1266,15 +1211,6 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
         const detailHeightDisplay = document.getElementById("value-detail-height");
         const clearBtn = document.getElementById("btn-clear-history");
 
-        const quotaRefreshSlider = document.getElementById("input-quota-refresh");
-        const quotaRefreshDisplay = document.getElementById("value-quota-refresh");
-        const quotaWarningSlider = document.getElementById("input-quota-warning");
-        const quotaWarningDisplay = document.getElementById("value-quota-warning");
-        const quotaCriticalSlider = document.getElementById("input-quota-critical");
-        const quotaCriticalDisplay = document.getElementById("value-quota-critical");
-        const quotaHistorySlider = document.getElementById("input-quota-history");
-        const quotaHistoryDisplay = document.getElementById("value-quota-history");
-        const quotaGaugeSelect = document.getElementById("select-quota-gauge");
 
         timeoutSlider.addEventListener("input", (e) => {
             const val = e.target.value;
@@ -1298,35 +1234,6 @@ export class FormViewProvider implements vscode.WebviewViewProvider {
             const val = e.target.value;
             detailHeightDisplay.textContent = val;
             vscode.postMessage({ type: "update_setting", key: "detailPanelHeight", value: parseInt(val, 10) });
-        });
-
-        quotaRefreshSlider.addEventListener("input", (e) => {
-            const val = e.target.value;
-            quotaRefreshDisplay.textContent = val;
-            vscode.postMessage({ type: "update_setting", key: "quotaRefreshRate", value: parseInt(val, 10) });
-        });
-
-        quotaWarningSlider.addEventListener("input", (e) => {
-            const val = e.target.value;
-            quotaWarningDisplay.textContent = val;
-            vscode.postMessage({ type: "update_setting", key: "quotaWarningThreshold", value: parseInt(val, 10) });
-        });
-
-        quotaCriticalSlider.addEventListener("input", (e) => {
-            const val = e.target.value;
-            quotaCriticalDisplay.textContent = val;
-            vscode.postMessage({ type: "update_setting", key: "quotaCriticalThreshold", value: parseInt(val, 10) });
-        });
-
-        quotaHistorySlider.addEventListener("input", (e) => {
-            const val = e.target.value;
-            quotaHistoryDisplay.textContent = val;
-            vscode.postMessage({ type: "update_setting", key: "quotaHistoryRangeDays", value: parseInt(val, 10) });
-        });
-
-        quotaGaugeSelect.addEventListener("change", (e) => {
-            const val = e.target.value;
-            vscode.postMessage({ type: "update_setting", key: "quotaGaugeStyle", value: val });
         });
 
         clearBtn.addEventListener("click", () => {

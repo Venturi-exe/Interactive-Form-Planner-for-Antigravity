@@ -5,7 +5,7 @@ import { ImpactReport } from "./types.js";
 import { initBrainFromTemplate, migrateToLayoutV3 } from "./core/migration.js";
 import { moveToTrash } from "./core/trash.js";
 import { writeJsonAtomic, writeAtomic, ensureDirSafe } from "./core/fsx.js";
-import { resolveInside, assertSafeFileName, normalizeProjectKey } from "./core/paths.js";
+import { resolveInside, assertSafeFileName, normalizeProjectKey, getProjectDir, getProjectReadDirs } from "./core/paths.js";
 import { withLock } from "./core/lock.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -42,8 +42,15 @@ export class OrbitBrain {
           // 3. Migrate brain to Layout v3
           const migrationRes = await migrateToLayoutV3(this.brainRoot);
           if (migrationRes.errors && migrationRes.errors.length > 0 && vscodeModule && vscodeModule.window) {
-            vscodeModule.window.showWarningMessage(
-              "Orbit: Layout v3 migration completed with warnings. Some folders could not be migrated.",
+            const showFn = migrationRes.migrated
+              ? vscodeModule.window.showWarningMessage
+              : vscodeModule.window.showErrorMessage;
+            const message = migrationRes.migrated
+              ? "Orbit: Layout v3 migration completed with warnings. Some items had warnings."
+              : "Orbit: Layout v3 migration failed. Some folders could not be migrated.";
+
+            showFn(
+              message,
               "Open Migration Log"
             ).then((action: string | undefined) => {
               if (action === "Open Migration Log") {
@@ -142,19 +149,7 @@ Global environment and tooling context. Updated automatically by the agent.
 
   /** Resolves project root directory supporting both Layout v3 and legacy Layout v2 (N-05). */
   public getProjectDir(projectName: string): string {
-    const key = this.sanitizeProjectName(projectName);
-    const targetSubPath = path.join("projects", key);
-    const v3Path = resolveInside(this.brainRoot, targetSubPath);
-    if (fs.existsSync(v3Path)) {
-      return v3Path;
-    }
-    try {
-      const legacyPath = resolveInside(this.brainRoot, key);
-      if (fs.existsSync(legacyPath)) {
-        return legacyPath;
-      }
-    } catch { /* skip */ }
-    return v3Path;
+    return getProjectDir(this.brainRoot, projectName);
   }
 
   /** Creates a project directory with full memory scaffold if it doesn't exist (N-05, N-11, N-12, N-15). */
@@ -257,7 +252,7 @@ This index maps active topics and tags to their respective memory files. Update 
           const fullPath = path.join(v3ProjectsDir, entry);
           try {
             if (fs.statSync(fullPath).isDirectory()) {
-              projects.add(entry.toLowerCase());
+              projects.add(normalizeProjectKey(entry));
             }
           } catch { /* skip */ }
         }
@@ -272,7 +267,7 @@ This index maps active topics and tags to their respective memory files. Update 
         const fullPath = path.join(this.brainRoot, entry);
         try {
           if (fs.statSync(fullPath).isDirectory() && fs.existsSync(path.join(fullPath, "memories"))) {
-            projects.add(entry.toLowerCase());
+            projects.add(normalizeProjectKey(entry));
           }
         } catch { /* skip */ }
       }
@@ -365,29 +360,27 @@ This index maps active topics and tags to their respective memory files. Update 
 
   /** Lists all cartograph reports for a specific project. */
   public listCartographReports(projectName: string): { filename: string; report: ImpactReport }[] {
-    const projDir = this.getProjectDir(projectName);
-    const cartographDir = path.join(projDir, "cartograph");
-    if (!fs.existsSync(cartographDir)) {
-      return [];
-    }
-
-    try {
-      const files = fs.readdirSync(cartographDir).filter(file => file.endsWith(".json"));
-      const reports: { filename: string; report: ImpactReport }[] = [];
-      for (const file of files) {
-        try {
-          const content = fs.readFileSync(path.join(cartographDir, file), "utf-8");
-          const report = JSON.parse(content) as ImpactReport;
-          reports.push({ filename: file, report });
-        } catch (e) {
-          console.error(`Failed to read cartograph report file ${file}:`, e);
+    const reports = new Map<string, { filename: string; report: ImpactReport }>();
+    for (const directory of getProjectReadDirs(this.brainRoot, projectName)) {
+      const cartographDir = path.join(directory, "cartograph");
+      if (!fs.existsSync(cartographDir)) continue;
+      try {
+        const files = fs.readdirSync(cartographDir).filter(file => file.endsWith(".json"));
+        for (const file of files) {
+          if (reports.has(file)) continue;
+          try {
+            const report = JSON.parse(fs.readFileSync(path.join(cartographDir, file), "utf-8")) as ImpactReport;
+            report.projectName = normalizeProjectKey(projectName);
+            reports.set(file, { filename: file, report });
+          } catch (e) {
+            console.error(`Failed to read cartograph report file ${file}:`, e);
+          }
         }
+      } catch (e) {
+        console.error(`Failed to list cartograph reports for project ${projectName}:`, e);
       }
-      return reports;
-    } catch (e) {
-      console.error(`Failed to list cartograph reports for project ${projectName}:`, e);
-      return [];
     }
+    return [...reports.values()];
   }
 
   /** Writes/saves a cartograph report to disk atomically. Returns the written filename. */
@@ -410,26 +403,25 @@ This index maps active topics and tags to their respective memory files. Update 
   /** Deletes a specific cartograph report by moving it to .trash. */
   public deleteCartographReport(projectName: string, filename: string): void {
     const safeName = assertSafeFileName(filename);
-    const projDir = this.getProjectDir(projectName);
-    const cartographDir = path.join(projDir, "cartograph");
-    const fullPath = resolveInside(cartographDir, safeName);
-    if (fs.existsSync(fullPath)) {
-      moveToTrash(fullPath, this.brainRoot).catch((err) => {
-        console.error(`Failed to move cartograph report to trash ${safeName}:`, err);
-      });
+    for (const directory of getProjectReadDirs(this.brainRoot, projectName)) {
+      const fullPath = resolveInside(path.join(directory, "cartograph"), safeName);
+      if (fs.existsSync(fullPath)) {
+        moveToTrash(fullPath, this.brainRoot).catch((err) => {
+          console.error(`Failed to move cartograph report to trash ${safeName}:`, err);
+        });
+      }
     }
   }
 
   /** Moves a cartograph report from one project to another safely. */
   public moveCartographReport(sourceProject: string, targetProject: string, filename: string): void {
+    if (normalizeProjectKey(sourceProject) === normalizeProjectKey(targetProject)) return;
     const safeName = assertSafeFileName(filename);
-    const sourceDir = this.getProjectDir(sourceProject);
-    const targetDir = this.getProjectDir(targetProject);
     this.ensureProject(targetProject);
-
-    const sourceCartographDir = path.join(sourceDir, "cartograph");
-    const sourcePath = resolveInside(sourceCartographDir, safeName);
-    if (!fs.existsSync(sourcePath)) return;
+    const sourcePath = getProjectReadDirs(this.brainRoot, sourceProject)
+      .map(directory => resolveInside(path.join(directory, "cartograph"), safeName))
+      .find(candidate => fs.existsSync(candidate));
+    if (!sourcePath) return;
 
     try {
       const content = fs.readFileSync(sourcePath, "utf-8");
@@ -439,9 +431,7 @@ This index maps active topics and tags to their respective memory files. Update 
       report.projectName = this.sanitizeProjectName(targetProject).toLowerCase();
 
       this.writeCartographReport(targetProject, report, safeName);
-      moveToTrash(sourcePath, this.brainRoot).catch((err) => {
-        console.error(`Failed to move old report to trash: ${safeName}`, err);
-      });
+      this.deleteCartographReport(sourceProject, safeName);
     } catch (e) {
       console.error(`Failed to move cartograph report ${safeName} from ${sourceProject} to ${targetProject}:`, e);
     }
@@ -489,14 +479,26 @@ This index maps active topics and tags to their respective memory files. Update 
 
   /** Migrates existing legacy reports from ~/.antigravity-forms/impacts/history/ to ~/.orbit-brain/ */
   public async migrateFromLegacy(): Promise<void> {
-    const sentinelPath = path.join(this.brainRoot, ".migrated");
-    if (fs.existsSync(sentinelPath)) {
+    const markerPath = path.join(this.brainRoot, ".migrated-marker");
+    const legacySentinelPath = path.join(this.brainRoot, ".migrated");
+    if (fs.existsSync(markerPath)) {
+      return;
+    }
+    if (fs.existsSync(legacySentinelPath)) {
+      try {
+        const st = await fs.promises.stat(legacySentinelPath);
+        if (st.isDirectory()) {
+          // .migrated is already an archive directory
+          await writeAtomic(markerPath, "migrated\n");
+          return;
+        }
+      } catch { /* skip */ }
       return;
     }
 
     const legacyDir = path.join(os.homedir(), ".antigravity-forms", "impacts", "history");
     if (!fs.existsSync(legacyDir)) {
-      await writeAtomic(sentinelPath, "migrated\n");
+      await writeAtomic(markerPath, "migrated\n");
       return;
     }
 
@@ -515,7 +517,7 @@ This index maps active topics and tags to their respective memory files. Update 
           console.error(`Failed to migrate legacy report file ${file}:`, e);
         }
       }
-      await writeAtomic(sentinelPath, "migrated\n");
+      await writeAtomic(markerPath, "migrated\n");
     } catch (e) {
       console.error("Failed to migrate legacy reports:", e);
     }

@@ -738,13 +738,16 @@ body {
     background-color: var(--vscode-editor-background);
     color: var(--vscode-foreground);
     padding: 24px;
-    display: flex;
-    justify-content: center;
+    display: block;
+    height: auto;
+    min-height: 100%;
+    overflow-y: auto;
 }
 
 .settings-container {
     max-width: 800px;
     width: 100%;
+    margin: 0 auto;
     animation: fadeIn 0.3s ease-out;
 }
 
