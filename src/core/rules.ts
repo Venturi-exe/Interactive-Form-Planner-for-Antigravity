@@ -324,3 +324,207 @@ What was completed. What changed for the user. Remaining limitations, risks, or 
 `;
 }
 
+/**
+ * Cleanly replaces GEMINI.md with Orbit rules after creating a timestamped backup.
+ */
+export async function replaceOrbitRules(
+    geminiMdPath: string,
+    rulesContent: string
+): Promise<boolean> {
+    const isWindows = process.platform === "win32";
+    const newline = isWindows ? "\r\n" : "\n";
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const dir = path.dirname(geminiMdPath);
+
+    if (!fs.existsSync(dir)) {
+        await fs.promises.mkdir(dir, { recursive: true });
+    }
+
+    if (fs.existsSync(geminiMdPath)) {
+        const backupPath = `${geminiMdPath}.bak-${timestamp}`;
+        try {
+            await fs.promises.copyFile(geminiMdPath, backupPath);
+        } catch (err) {
+            console.warn(`[Orbit Rules] Failed to create backup at ${backupPath}:`, err);
+        }
+    }
+
+    const block = `${ORBIT_START_MARKER}${newline}${rulesContent.trim()}${newline}${ORBIT_END_MARKER}${newline}`;
+    const newContent = `# Agent Instructions${newline}${newline}${block}`;
+    await writeAtomic(geminiMdPath, newContent);
+    return true;
+}
+
+/**
+ * Restores GEMINI.md from the most recent backup file if one exists.
+ */
+export async function restoreOrbitRulesBackup(geminiMdPath: string): Promise<boolean> {
+    const dir = path.dirname(geminiMdPath);
+    if (!fs.existsSync(dir)) {
+        return false;
+    }
+
+    const baseName = path.basename(geminiMdPath);
+    const files = await fs.promises.readdir(dir);
+
+    // Look for timestamped backups first (.bak-*) then legacy (.orbit.bak)
+    const backupCandidates = files
+        .filter((f) => f.startsWith(`${baseName}.bak-`) || f === `${baseName}.orbit.bak`)
+        .map((f) => path.join(dir, f));
+
+    if (backupCandidates.length === 0) {
+        return false;
+    }
+
+    // Sort by modification time descending
+    backupCandidates.sort((a, b) => {
+        try {
+            return fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs;
+        } catch {
+            return 0;
+        }
+    });
+
+    const latestBackup = backupCandidates[0];
+    const content = await fs.promises.readFile(latestBackup, "utf-8");
+    await writeAtomic(geminiMdPath, content);
+    return true;
+}
+
+/**
+ * Returns a technical integration specification for users with customized,
+ * modular, or pre-optimized GEMINI.md setups.
+ */
+export function getOrbitSpecification(): string {
+    return `# Orbit Subsystem Integration Specification
+
+This technical specification details the MCP tools, schemas, parameters, and protocol conventions required for custom or modular agent rule systems (such as protocol loaders in GEMINI.md).
+
+---
+
+## 1. Subsystem Overview
+
+Orbit provides three integrated subsystems to the Antigravity agent:
+1. **Interactive Form Planner (\`orbit_planner\`)**: Structured pre-execution UI forms for resolving ambiguities and aligning on architectural trade-offs.
+2. **Cartograph Hub (\`write_impact_report\`)**: Turn-scoped visual impact reporting, node graphs, timeline playback, and notes walkthroughs.
+3. **Orbit Memory System (\`orbit_memory\`)**: Project-scoped persistent context, topic memories, and report organization in \`~/.orbit-brain/\`.
+
+---
+
+## 2. Tool 1: orbit_planner (Interactive Form Planner)
+
+### Schema & Parameters
+- **Tool Name**: \`orbit_planner\`
+- **Arguments**:
+  - \`resumeRequestId\` *(string, optional)*: Request ID of an active form session to resume polling after a pending slice.
+  - \`title\` *(string, required for new requests)*: Brief, human-readable title of the active task.
+  - \`description\` *(string, optional)*: Context or summary of what is being planned.
+  - \`fields\` *(array of objects, 1-5, required for new requests)*:
+    - \`id\` *(string)*: Unique field identifier.
+    - \`label\` *(string)*: The prompt or decision presented to the user.
+    - \`type\` *(string)*: \`"single-choice"\` | \`"multi-choice"\` | \`"free-text"\`.
+    - \`options\` *(array of strings, optional)*: Selectable answers.
+  - \`showExecuteButton\` *(boolean, optional)*: Set to \`true\` during iterative refining loops (e.g. \`@trigger deep prompt refining\`).
+
+### Response Contract
+The tool returns a JSON structure containing:
+- \`action\`: \`"submit"\` | \`"execute"\` | \`"clarification"\` | \`"dismiss"\` | \`"timeout"\` | \`"pending"\`.
+- \`requestId\`: Unique request identifier.
+- \`data\`: Submitted form answers.
+- \`clarificationRequest\`: Returned when the user asks a clarifying question instead of selecting an option.
+- \`resumeRequestId\`: Provided when \`action\` is \`"pending"\` for continuation.
+
+### Protocol Rules
+- **Preference**: Prefer \`orbit_planner\` over \`default_api:ask_question\`.
+- **Skip Conditions**: Skip the form only when prompt is 100% self-contained with zero ambiguity, or a trivial single-action edit, or a pure factual lookup.
+- **Pending Slice Continuation Rule**: If \`"action": "pending"\`, the agent MUST immediately call \`orbit_planner({ resumeRequestId })\` without modifying workspace files.
+- **Timeout Rule**: If \`"action": "timeout"\`, the agent MUST immediately halt execution, make no file edits, and report the pending questions to the user.
+- **Clarification Rule**: If \`clarificationRequest\` is returned, stop execution, answer the user's question, and present an updated plan form.
+
+---
+
+## 3. Tool 2: write_impact_report (Cartograph Impact Tracking)
+
+### Schema & Parameters
+- **Tool Name**: \`write_impact_report\`
+- **Arguments**:
+  - \`projectName\` *(string, required)*: Target project name under \`~/.orbit-brain/\` (e.g. \`orbit\`, or \`_default\`).
+  - \`summary\` *(string, required)*: Concise description of the turn's achievement.
+  - \`changes\` *(array of objects, required)*:
+    - \`path\` *(string)*: Absolute file path affected.
+    - \`description\` *(string)*: Complete sentence explaining what changed and why.
+  - \`planningContext\` *(object, required)*:
+    - \`roadmap\` *(array of strings)*: Step-by-step execution plan followed.
+    - \`assumptions\` *(array of strings)*: Scope or technical assumptions.
+    - \`userDecisions\` *(array of strings)*: Decisions made via planner or user requests.
+    - \`questionsAsked\` *(array of strings)*: Alignment questions posed.
+    - \`outOfScope\` *(array of strings)*: Intentionally deferred items.
+    - \`notes\` *(string, required)*: Complete 8-section walkthrough narrative.
+
+### Required 8-Section Walkthrough in \`planningContext.notes\`
+\`\`\`markdown
+## 1. Prompt Understanding
+How the agent interpreted the request, goals, and assumptions.
+
+## 2. Task Breakdown
+List of tasks decided upon and why each was necessary.
+
+## 3. Tool Usage
+Summary of tools called and high-level results.
+
+## 4. Changes Made
+Every file created, modified, or deleted with rationale.
+
+## 5. Decision Process
+Key implementation decisions and alternative methods considered.
+
+## 6. Issues Discovered
+Bugs, test failures, or inconsistencies identified and how resolved.
+
+## 7. Validation
+Exact tests run, commands executed, and verification results.
+
+## 8. Final Outcome
+What was completed, what changed for the user, and remaining limitations.
+\`\`\`
+
+### Trigger Rules
+- **Turn-Scoped**: Call \`write_impact_report\` only at the end of turns that modified files, made planner decisions, or completed significant planning.
+- **Do Not Call**: Never call after pure read-only turns, trivial clarifications, or research queries with no file changes.
+
+---
+
+## 4. Tool 3: orbit_memory (Orbit Memory System)
+
+### Brain Directory Structure
+\`\`\`text
+~/.orbit-brain/
+  <project-name>/
+    cartograph/          # Impact reports (*.json)
+    memories/
+      INDEX.md           # Mapped concepts and active topics
+      facts/             # Immutable truths and constants (*.md)
+      features/          # Feature architecture specs (*.md)
+      tasks/             # Open bugs and punchlists (*.md)
+      sessions/          # Chronological session logs (*.md)
+\`\`\`
+
+### Available Actions
+- \`list_projects\`: Returns array of registered projects in \`~/.orbit-brain/\`.
+- \`ensure_project\`: Creates project scaffold if not existing.
+- \`read_cartograph_report\` / \`write_cartograph_report\`: Reads or creates impact reports.
+- \`move_cartograph_report\` / \`delete_cartograph_report\`: Manages reports (deletes route safely to \`_trash/<timestamp>/\`).
+- \`list_all_cartograph_reports\`: Discovers reports across all projects for reorganization.
+
+---
+
+## 5. Progress Output Convention
+
+After each implementation step, output a single-line progress note:
+\`\`\`text
+Done: [step completed] | Files: [files affected]
+\`\`\`
+`;
+}
+
+

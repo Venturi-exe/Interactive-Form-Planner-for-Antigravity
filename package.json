@@ -86,7 +86,7 @@
       },
       {
         "command": "orbit.setup",
-        "title": "Orbit: Run Setup"
+        "title": "Orbit: Run Setup Wizard"
       },
       {
         "command": "orbit.repair",
@@ -95,6 +95,14 @@
       {
         "command": "orbit.removeIntegration",
         "title": "Orbit: Remove Integration"
+      },
+      {
+        "command": "orbit.showSpecification",
+        "title": "Orbit: View Integration Specification"
+      },
+      {
+        "command": "orbit.copySpecification",
+        "title": "Orbit: Copy Specification to Clipboard"
       },
       {
         "command": "orbit.copySnippet",
@@ -130,9 +138,15 @@
       "properties": {
         "orbit.setup.mode": {
           "type": "string",
-          "enum": ["auto", "ask", "off"],
-          "default": "auto",
-          "description": "Auto-setup mode for registering MCP server and assistant rules in ~/.gemini."
+          "enum": ["interactive", "auto", "ask", "off"],
+          "default": "interactive",
+          "description": "Setup mode on first run: 'interactive' prompts the setup wizard, 'auto' configures defaults without prompting, 'ask' prompts confirmation, 'off' disables setup."
+        },
+        "orbit.trackWorkspace": {
+          "type": "string",
+          "enum": ["always", "ask", "never"],
+          "default": "always",
+          "description": "Whether to automatically map and track workspace projects in Orbit Brain."
         },
         "orbit.privacy.recordEnvironment": {
           "type": "boolean",

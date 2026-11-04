@@ -9,8 +9,9 @@ import * as os from "os";
 import * as jsonc from "jsonc-parser";
 import { detectHost, getStorageOwner } from "./core/host.js";
 import { isSubpath } from "./core/paths.js";
-import { removeOrbitRules } from "./core/rules.js";
+import { removeOrbitRules, restoreOrbitRulesBackup } from "./core/rules.js";
 import { writeAtomic, createRollingBackup } from "./core/fsx.js";
+import { LEGACY_EXTENSION_IDS } from "./core/config.js";
 
 export interface UninstallOptions {
     appName?: string;
@@ -19,12 +20,17 @@ export interface UninstallOptions {
     mcpConfigPath?: string;
     mcpConfigPaths?: string[];
     geminiMdPath?: string;
+    preserveRules?: boolean;
+    restoreBackup?: boolean;
+    brainAction?: "keep" | "archive" | "delete";
 }
 
 export interface UninstallResult {
     success: boolean;
     removedServer: boolean;
     removedRules: boolean;
+    restoredBackup?: boolean;
+    brainActionTaken?: string;
     reason?: string;
 }
 
@@ -76,8 +82,7 @@ export function isOrbitServerEntry(
             // P-02: Require folder right after globalStorage to match the extension package ID case-insensitively
             const isOrbitExtFolder =
                 extFolder === "vntrcorp.orbit" ||
-                extFolder === "vntrcorp.antigravity-interactive-form-planner-planning-tool" ||
-                extFolder === "vntrcorp.antigravity-pre-execution-form-planner";
+                LEGACY_EXTENSION_IDS.some(id => id === extFolder);
             if (isOrbitExtFolder) {
                 const storageOwner = getStorageOwner(arg0);
                 if (hostIsAntigravity === false) {
@@ -201,27 +206,66 @@ export async function runUninstall(options?: UninstallOptions): Promise<Uninstal
             }
         }
 
-        // 2. Remove Orbit rules block from GEMINI.md
-        // - In Antigravity: always remove rules on uninstall
-        // - In non-Antigravity (e.g. stock VS Code): remove rules ONLY when both:
-        //   (a) this run removed a VS Code-owned server entry (result.removedServer === true), and
-        //   (b) no "orbit" or "antigravity-planner" key is left in mcp_config.json afterwards (P-01).
-        let shouldCleanRules = false;
-        if (host.isAntigravity) {
-            shouldCleanRules = true;
-        } else if (result.removedServer && !remainingOrbitKeys) {
-            shouldCleanRules = true;
-        }
-
-        if (shouldCleanRules && fs.existsSync(geminiMdPath)) {
+        // 2. Handle GEMINI.md rules based on options and host environment
+        if (options?.restoreBackup && fs.existsSync(geminiMdPath)) {
             try {
-                const removed = await removeOrbitRules(geminiMdPath);
-                if (removed) {
-                    result.removedRules = true;
-                    console.log("[Orbit Uninstall] Removed Orbit marker rules from GEMINI.md");
+                const restored = await restoreOrbitRulesBackup(geminiMdPath);
+                if (restored) {
+                    result.restoredBackup = true;
+                    console.log("[Orbit Uninstall] Restored GEMINI.md from previous backup.");
                 }
             } catch (err) {
-                console.error("[Orbit Uninstall] Failed to clean GEMINI.md:", err);
+                console.error("[Orbit Uninstall] Failed to restore backup for GEMINI.md:", err);
+            }
+        } else if (!options?.preserveRules) {
+            // - In Antigravity: remove rules on uninstall
+            // - In non-Antigravity (e.g. stock VS Code): remove rules ONLY when both:
+            //   (a) this run removed a VS Code-owned server entry (result.removedServer === true), and
+            //   (b) no "orbit" or "antigravity-planner" key is left in mcp_config.json afterwards (P-01).
+            let shouldCleanRules = false;
+            if (host.isAntigravity) {
+                shouldCleanRules = true;
+            } else if (result.removedServer && !remainingOrbitKeys) {
+                shouldCleanRules = true;
+            }
+
+            if (shouldCleanRules && fs.existsSync(geminiMdPath)) {
+                try {
+                    const removed = await removeOrbitRules(geminiMdPath);
+                    if (removed) {
+                        result.removedRules = true;
+                        console.log("[Orbit Uninstall] Removed Orbit marker rules from GEMINI.md");
+                    }
+                } catch (err) {
+                    console.error("[Orbit Uninstall] Failed to clean GEMINI.md:", err);
+                }
+            }
+        }
+
+        // 3. Handle persistent brain data (~/.orbit-brain) if explicitly commanded
+        if (options?.brainAction === "archive") {
+            const brainPath = path.join(os.homedir(), ".orbit-brain");
+            if (fs.existsSync(brainPath)) {
+                try {
+                    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+                    const archivePath = path.join(os.homedir(), `.orbit-brain-archived-${timestamp}`);
+                    await fs.promises.rename(brainPath, archivePath);
+                    result.brainActionTaken = `Archived to ${archivePath}`;
+                    console.log(`[Orbit Uninstall] Archived ~/.orbit-brain to ${archivePath}`);
+                } catch (err) {
+                    console.error("[Orbit Uninstall] Failed to archive ~/.orbit-brain:", err);
+                }
+            }
+        } else if (options?.brainAction === "delete") {
+            const brainPath = path.join(os.homedir(), ".orbit-brain");
+            if (fs.existsSync(brainPath)) {
+                try {
+                    await fs.promises.rm(brainPath, { recursive: true, force: true });
+                    result.brainActionTaken = "Deleted ~/.orbit-brain";
+                    console.log("[Orbit Uninstall] Deleted ~/.orbit-brain");
+                } catch (err) {
+                    console.error("[Orbit Uninstall] Failed to delete ~/.orbit-brain:", err);
+                }
             }
         }
 

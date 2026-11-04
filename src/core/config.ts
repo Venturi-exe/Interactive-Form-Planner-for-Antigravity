@@ -3,6 +3,12 @@ import * as path from "path";
 import * as jsonc from "jsonc-parser";
 import { writeAtomic, createRollingBackup } from "./fsx.js";
 
+// Historical package IDs used only for compatibility and removal of old registrations.
+export const LEGACY_EXTENSION_IDS = [
+    "vntrcorp.antigravity-pre-execution-form-planner",
+    "vntrcorp.antigravity-interactive-form-planner-planning-tool",
+] as const;
+
 export interface UpdateMcpConfigResult {
     success: boolean;
     error?: string;

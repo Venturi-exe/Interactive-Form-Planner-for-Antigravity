@@ -1,7 +1,7 @@
 /**
  * Orbit : Ultimate planning tool for antigravity.
  *
- * Copyright (c) 2026 Venturi-exe / VNTR.CORP
+ * Copyright (c) 2026 Venturi-exe / VNTRCORP
  * Licensed under the Orbit Personal Use License.
  * See LICENSE.txt in the project root for license information.
  */
@@ -18,10 +18,12 @@ import { OrbitBrain } from "./OrbitBrain.js";
 import { HubPanelManager } from "./HubPanelManager.js";
 import { updateMcpConfig } from "./core/config.js";
 import { detectHost, getStorageOwner } from "./core/host.js";
-import { injectOrbitRules, getOrbitRulesTemplate, removeOrbitRules, ORBIT_START_MARKER } from "./core/rules.js";
+import { injectOrbitRules, getOrbitRulesTemplate, getOrbitSpecification, removeOrbitRules, ORBIT_START_MARKER } from "./core/rules.js";
 import { isSubpath } from "./core/paths.js";
 import { writeAtomic } from "./core/fsx.js";
 import { runUninstall } from "./uninstall.js";
+import { runSetupWizard, displaySpecificationDocument } from "./core/setupWizard.js";
+import { runRemovalWizard } from "./core/removalWizard.js";
 import * as jsonc from "jsonc-parser";
 
 let mcpBridge: McpBridge | undefined;
@@ -315,69 +317,44 @@ The goal is to demonstrate all the features of the Orbit pre-execution planner a
     context.subscriptions.push(
         vscode.commands.registerCommand("orbit.setup", async () => {
             await context.globalState.update("orbit.integrationRemoved", undefined);
-            await runFirstTimeSetup(context, true);
+            const stableServerPath = await syncMcpServer(context);
+            await runSetupWizard(context, stableServerPath, { force: true });
         })
     );
 
     context.subscriptions.push(
         vscode.commands.registerCommand("orbit.repair", async () => {
             await context.globalState.update("orbit.integrationRemoved", undefined);
-            await syncMcpServer(context);
-            await runFirstTimeSetup(context, true);
+            const stableServerPath = await syncMcpServer(context);
+            const host = detectHost(vscode.env.appName);
+            const customNodePath = vscode.workspace.getConfiguration("orbit").get<string>("nodePath", "").trim();
+            const nodeCommand = customNodePath || "node";
+            await updateMcpConfig(host.mcpConfigPath, stableServerPath, nodeCommand);
+            const mode = context.globalState.get<string>("orbit.geminiIntegrationMode");
+            if (mode !== "manual") {
+                await injectOrbitRules(host.geminiMdPath, getOrbitRulesTemplate());
+            }
             vscode.window.showInformationMessage("Orbit: Configuration repaired and MCP server refreshed.");
         })
     );
 
     context.subscriptions.push(
         vscode.commands.registerCommand("orbit.removeIntegration", async () => {
-            const confirm = await vscode.window.showWarningMessage(
-                "Remove Orbit MCP server registration and assistant guidelines from ~/.gemini?",
-                "Remove",
-                "Cancel"
-            );
-            if (confirm === "Remove") {
-                const res = await runUninstall({
-                    appName: vscode.env.appName,
-                    globalStoragePath: context.globalStorageUri.fsPath,
-                });
-                if (res.success) {
-                    await context.globalState.update("setupVersion", undefined);
-                    await context.globalState.update("orbit.setupConsented", undefined);
-                    // N-02: Store persistent flag so auto-setup respects removal until user explicitly runs orbit.setup
-                    await context.globalState.update("orbit.integrationRemoved", true);
-                    if (res.removedServer || res.removedRules) {
-                        vscode.window.showInformationMessage("Orbit: Integration removed from ~/.gemini.");
-                    } else {
-                        // M-04 & M-01: Check if an Orbit entry exists pointing to a foreign host's storage path
-                        let foreignOwner: string | undefined;
-                        const host = detectHost(vscode.env.appName);
-                        if (fs.existsSync(host.mcpConfigPath)) {
-                            try {
-                                const raw = fs.readFileSync(host.mcpConfigPath, "utf-8");
-                                const parsed = jsonc.parse(raw);
-                                for (const k of ["orbit", "antigravity-planner"]) {
-                                    const ent = parsed?.mcpServers?.[k];
-                                    if (ent && Array.isArray(ent.args) && typeof ent.args[0] === "string") {
-                                        const owner = getStorageOwner(ent.args[0]);
-                                        const currentOwner = host.isAntigravity ? "antigravity" : "vscode";
-                                        if (owner !== "unknown" && owner !== currentOwner) {
-                                            foreignOwner = owner === "antigravity" ? "Antigravity" : "VS Code";
-                                            break;
-                                        }
-                                    }
-                                }
-                            } catch { /* skip */ }
-                        }
-                        if (foreignOwner) {
-                            vscode.window.showWarningMessage(`Orbit: Found an Orbit registration pointing to ${foreignOwner} storage. Remove it from that editor or manually update mcp_config.json.`);
-                        } else {
-                            vscode.window.showInformationMessage("Orbit: No active Orbit integration found to remove.");
-                        }
-                    }
-                } else {
-                    vscode.window.showErrorMessage(`Orbit: Failed to remove integration (${res.reason || "unknown error"}).`);
-                }
-            }
+            await runRemovalWizard(context);
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand("orbit.showSpecification", async () => {
+            await displaySpecificationDocument();
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand("orbit.copySpecification", async () => {
+            const spec = getOrbitSpecification();
+            await vscode.env.clipboard.writeText(spec);
+            vscode.window.showInformationMessage("Orbit: Integration specification copied to clipboard.");
         })
     );
 
@@ -464,162 +441,168 @@ export async function runFirstTimeSetup(context: vscode.ExtensionContext, force 
     }
 
     const host = detectHost(vscode.env.appName);
-    let isRepair = false;
 
-    if (!force && context.globalState.get("setupVersion") === "9") {
-        if (host.isAntigravity) {
-            // Q-02, N-03: In Antigravity, verify whether MCP server configuration was stripped externally
-            let serverNeedsRepair = false;
-            if (!fs.existsSync(host.mcpConfigPath)) {
-                serverNeedsRepair = true;
-            } else {
+    // V-02 Host Gate: Do not configure host GEMINI.md or mcp_config.json in non-Antigravity editors
+    if (!host.isAntigravity) {
+        console.log(`[Orbit Setup] Non-Antigravity editor detected (${vscode.env.appName || "unknown"}). Skipping auto-setup.`);
+
+        // Q7 Cleanup: Check for legacy 0.2.6 registration pointing to this host's globalStorage
+        if (!context.globalState.get<boolean>("orbit.q7LegacyChecked", false)) {
+            await context.globalState.update("orbit.q7LegacyChecked", true);
+            if (fs.existsSync(host.mcpConfigPath)) {
                 try {
                     const raw = await fs.promises.readFile(host.mcpConfigPath, "utf-8");
                     const parsed = jsonc.parse(raw);
-                    const serverEntry = parsed?.mcpServers?.orbit || parsed?.mcpServers?.["antigravity-planner"];
-                    if (!serverEntry) {
-                        serverNeedsRepair = true;
-                    } else {
-                        // N-03: Also verify that args[0] exists on disk (catches stale paths from 0.2.6)
-                        const serverScript = serverEntry.args?.[0];
-                        if (!serverScript || !fs.existsSync(serverScript)) {
-                            serverNeedsRepair = true;
-                        }
-                    }
-                } catch {
-                    serverNeedsRepair = true;
-                }
-            }
+                    const orbitEntry = parsed?.mcpServers?.orbit || parsed?.mcpServers?.["antigravity-planner"];
+                    if (orbitEntry && Array.isArray(orbitEntry.args) && typeof orbitEntry.args[0] === "string") {
+                        const arg0 = path.resolve(orbitEntry.args[0]);
+                        const storageOwner = getStorageOwner(arg0);
+                        const belongsToThisHost = isSubpath(arg0, context.globalStorageUri.fsPath) || storageOwner === "vscode";
+                        if (belongsToThisHost) {
+                            const cleanupChoice = await vscode.window.showInformationMessage(
+                                "Orbit: Detected obsolete Orbit MCP server and assistant guidelines registered in ~/.gemini from a previous installation in this editor. Clean them up?",
+                                "Clean Up",
+                                "Keep"
+                            );
+                            if (cleanupChoice === "Clean Up") {
+                                await runUninstall({
+                                    appName: vscode.env.appName,
+                                    globalStoragePath: context.globalStorageUri.fsPath,
+                                });
 
-            // N-03: Only repair rules if the server is also missing or needs repair.
-            // If the server entry is healthy and intact, a missing rules block in GEMINI.md
-            // is respected as a deliberate user edit and not repeatedly overwritten.
-            let needsRepair = false;
-            if (serverNeedsRepair) {
-                needsRepair = true;
-            }
-
-            if (!needsRepair) {
-                return;
-            }
-            isRepair = true;
-            console.log("[Orbit Setup] Missing Orbit integration detected in Antigravity. Auto-repairing.");
-        } else {
-            return;
-        }
-    }
-
-    try {
-        // V-02 Host Gate: Do not configure host GEMINI.md or mcp_config.json in non-Antigravity editors
-        if (!host.isAntigravity) {
-            console.log(`[Orbit Setup] Non-Antigravity editor detected (${vscode.env.appName || "unknown"}). Skipping auto-setup.`);
-
-            // Q7 Cleanup: Check for legacy 0.2.6 registration pointing to this host's globalStorage
-            if (!context.globalState.get<boolean>("orbit.q7LegacyChecked", false)) {
-                await context.globalState.update("orbit.q7LegacyChecked", true);
-                if (fs.existsSync(host.mcpConfigPath)) {
-                    try {
-                        const raw = await fs.promises.readFile(host.mcpConfigPath, "utf-8");
-                        const parsed = jsonc.parse(raw);
-                        const orbitEntry = parsed?.mcpServers?.orbit || parsed?.mcpServers?.["antigravity-planner"];
-                        if (orbitEntry && Array.isArray(orbitEntry.args) && typeof orbitEntry.args[0] === "string") {
-                            const arg0 = path.resolve(orbitEntry.args[0]);
-                            const storageOwner = getStorageOwner(arg0);
-                            const belongsToThisHost = isSubpath(arg0, context.globalStorageUri.fsPath) || storageOwner === "vscode";
-                            if (belongsToThisHost) {
-                                const cleanupChoice = await vscode.window.showInformationMessage(
-                                    "Orbit: Detected obsolete Orbit MCP server and assistant guidelines registered in ~/.gemini from a previous installation in this editor. Clean them up?",
-                                    "Clean Up",
-                                    "Keep"
-                                );
-                                if (cleanupChoice === "Clean Up") {
-                                    await runUninstall({
-                                        appName: vscode.env.appName,
-                                        globalStoragePath: context.globalStorageUri.fsPath,
-                                    });
-
-                                    // M-04 & M-01: If no Antigravity Orbit server remains in mcp_config.json, clean up GEMINI.md rules
-                                    let hasAntigravityOrbitServer = false;
-                                    if (fs.existsSync(host.mcpConfigPath)) {
-                                        try {
-                                            const checkRaw = await fs.promises.readFile(host.mcpConfigPath, "utf-8");
-                                            const checkParsed = jsonc.parse(checkRaw);
-                                            for (const k of ["orbit", "antigravity-planner"]) {
-                                                const ent = checkParsed?.mcpServers?.[k];
-                                                if (ent && Array.isArray(ent.args) && typeof ent.args[0] === "string") {
-                                                    if (getStorageOwner(ent.args[0]) === "antigravity") {
-                                                        hasAntigravityOrbitServer = true;
-                                                    }
+                                // M-04 & M-01: If no Antigravity Orbit server remains in mcp_config.json, clean up GEMINI.md rules
+                                let hasAntigravityOrbitServer = false;
+                                if (fs.existsSync(host.mcpConfigPath)) {
+                                    try {
+                                        const checkRaw = await fs.promises.readFile(host.mcpConfigPath, "utf-8");
+                                        const checkParsed = jsonc.parse(checkRaw);
+                                        for (const k of ["orbit", "antigravity-planner"]) {
+                                            const ent = checkParsed?.mcpServers?.[k];
+                                            if (ent && Array.isArray(ent.args) && typeof ent.args[0] === "string") {
+                                                if (getStorageOwner(ent.args[0]) === "antigravity") {
+                                                    hasAntigravityOrbitServer = true;
                                                 }
                                             }
-                                        } catch { /* skip */ }
-                                    }
-                                    if (!hasAntigravityOrbitServer && fs.existsSync(host.geminiMdPath)) {
-                                        await removeOrbitRules(host.geminiMdPath);
-                                    }
-
-                                    vscode.window.showInformationMessage("Orbit: Legacy server registration and assistant guidelines cleaned up.");
+                                        }
+                                    } catch { /* skip */ }
                                 }
+                                if (!hasAntigravityOrbitServer && fs.existsSync(host.geminiMdPath)) {
+                                    await removeOrbitRules(host.geminiMdPath);
+                                }
+
+                                vscode.window.showInformationMessage("Orbit: Legacy server registration and assistant guidelines cleaned up.");
                             }
                         }
-                    } catch { /* skip */ }
-                }
+                    }
+                } catch { /* skip */ }
             }
-            return;
         }
+        return;
+    }
 
-        // V-02 Setup Mode and Consent Gate
-        const setupConfig = vscode.workspace.getConfiguration("orbit.setup");
-        const setupMode = setupConfig.get<string>("mode", "auto");
+    const currentSetupVersion = context.globalState.get<string>("setupVersion");
 
-        if (!force && setupMode === "off") {
-            console.log("[Orbit Setup] Setup mode is configured to 'off'. Skipping auto-setup.");
-            return;
-        }
-
-        if (!force && setupMode === "ask") {
-            const consented = context.globalState.get<boolean>("orbit.setupConsented", false);
-            if (!consented) {
-                const choice = await vscode.window.showInformationMessage(
-                    "Orbit: Register Orbit MCP server and assistant guidelines in ~/.gemini?",
-                    "Yes",
-                    "Always",
-                    "Not Now"
-                );
-                if (choice === "Always") {
-                    await setupConfig.update("mode", "auto", vscode.ConfigurationTarget.Global);
-                } else if (choice === "Yes") {
-                    await context.globalState.update("orbit.setupConsented", true);
+    // If setupVersion is 10, extension is already configured. Check for broken MCP config with consent.
+    if (!force && currentSetupVersion === "10") {
+        let serverNeedsRepair = false;
+        if (!fs.existsSync(host.mcpConfigPath)) {
+            serverNeedsRepair = true;
+        } else {
+            try {
+                const raw = await fs.promises.readFile(host.mcpConfigPath, "utf-8");
+                const parsed = jsonc.parse(raw);
+                const serverEntry = parsed?.mcpServers?.orbit || parsed?.mcpServers?.["antigravity-planner"];
+                if (!serverEntry) {
+                    serverNeedsRepair = true;
                 } else {
-                    console.log("[Orbit Setup] User declined or deferred setup.");
-                    return;
+                    const serverScript = serverEntry.args?.[0];
+                    if (!serverScript || !fs.existsSync(serverScript)) {
+                        serverNeedsRepair = true;
+                    }
                 }
+            } catch {
+                serverNeedsRepair = true;
             }
         }
 
-        // 2. Configure MCP server in host mcp_config.json (P6-3 custom node command)
+        if (serverNeedsRepair) {
+            const repairChoice = await vscode.window.showWarningMessage(
+                "Orbit: The Orbit MCP server registration appears to be missing or damaged. Would you like to repair it?",
+                "Repair",
+                "Ignore"
+            );
+            if (repairChoice === "Repair") {
+                const customNodePath = vscode.workspace.getConfiguration("orbit").get<string>("nodePath", "").trim();
+                const nodeCommand = customNodePath || "node";
+                await updateMcpConfig(host.mcpConfigPath, stableServerPath, nodeCommand);
+                const mode = context.globalState.get<string>("orbit.geminiIntegrationMode");
+                if (mode !== "manual") {
+                    await injectOrbitRules(host.geminiMdPath, getOrbitRulesTemplate());
+                }
+                vscode.window.showInformationMessage("Orbit: Restored MCP server registration.");
+            }
+        }
+        return;
+    }
+
+    // Setup Mode Gate
+    const setupConfig = vscode.workspace.getConfiguration("orbit.setup");
+    const setupMode = setupConfig.get<string>("mode", "interactive");
+
+    if (!force && setupMode === "off") {
+        console.log("[Orbit Setup] Setup mode is configured to 'off'. Skipping auto-setup.");
+        return;
+    }
+
+    if (force) {
+        await runSetupWizard(context, stableServerPath, { force: true });
+        return;
+    }
+
+    if (setupMode === "interactive" || setupMode === "ask") {
+        const choice = await vscode.window.showInformationMessage(
+            "Welcome to Orbit! Would you like to configure Orbit for Antigravity now?",
+            "Start Setup Wizard",
+            "Manual Setup (Custom Prompt)",
+            "Later"
+        );
+        if (choice === "Start Setup Wizard") {
+            await runSetupWizard(context, stableServerPath);
+        } else if (choice === "Manual Setup (Custom Prompt)") {
+            if (!fs.existsSync(host.configDir)) {
+                await fs.promises.mkdir(host.configDir, { recursive: true });
+            }
+            const customNodePath = vscode.workspace.getConfiguration("orbit").get<string>("nodePath", "").trim();
+            const nodeCommand = customNodePath || "node";
+            await updateMcpConfig(host.mcpConfigPath, stableServerPath, nodeCommand);
+            await context.globalState.update("orbit.geminiIntegrationMode", "manual");
+            await context.globalState.update("setupVersion", "10");
+            await displaySpecificationDocument();
+            vscode.window.showInformationMessage("Orbit: MCP server registered. Opened technical specification for custom integration.");
+        } else {
+            console.log("[Orbit Setup] User deferred setup.");
+        }
+        return;
+    }
+
+    // setupMode === "auto": Automated headless fallback
+    try {
         if (!fs.existsSync(host.configDir)) {
             await fs.promises.mkdir(host.configDir, { recursive: true });
         }
         const customNodePath = vscode.workspace.getConfiguration("orbit").get<string>("nodePath", "").trim();
         const nodeCommand = customNodePath || "node";
+        await updateMcpConfig(host.mcpConfigPath, stableServerPath, nodeCommand);
 
-        const configResult = await updateMcpConfig(host.mcpConfigPath, stableServerPath, nodeCommand);
-        if (!configResult.success) {
-            vscode.window.showErrorMessage(`Orbit: ${configResult.error}`);
-            return;
+        const mode = context.globalState.get<string>("orbit.geminiIntegrationMode");
+        if (mode !== "manual") {
+            const alignmentRule = getOrbitRulesTemplate();
+            await injectOrbitRules(host.geminiMdPath, alignmentRule);
+            await context.globalState.update("orbit.geminiIntegrationMode", "appended");
         }
 
-        // 3. Configure GEMINI.md rules with versioned marker boundaries (V-10 / V-12)
-        const alignmentRule = getOrbitRulesTemplate();
-        await injectOrbitRules(host.geminiMdPath, alignmentRule);
-
-        context.globalState.update("setupVersion", "9");
-        if (isRepair) {
-            vscode.window.showInformationMessage("Orbit: Restored MCP server registration and assistant guidelines.");
-        } else {
-            vscode.window.showInformationMessage("Orbit: Setup complete. MCP server registered and GEMINI.md updated.");
-        }
+        context.globalState.update("setupVersion", "10");
+        vscode.window.showInformationMessage("Orbit: Setup complete. MCP server registered.");
     } catch (error) {
         console.error("Auto-setup failed:", error);
     }
