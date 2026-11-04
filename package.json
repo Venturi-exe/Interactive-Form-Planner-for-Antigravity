@@ -187,7 +187,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit && tsc -p tsconfig.webview.json --noEmit",
     "lint": "eslint .",
-    "test": "node esbuild.js && vitest run",
+    "test": "node esbuild.js --production && vitest run",
     "build-webview": "node esbuild.js",
     "compile": "node esbuild.js",
     "watch": "node esbuild.js --watch",

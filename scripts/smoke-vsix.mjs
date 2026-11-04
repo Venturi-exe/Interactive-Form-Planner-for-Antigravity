@@ -39,6 +39,7 @@ console.log(`[smoke-vsix] Smoke testing VSIX: ${vsixPath}`);
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'orbit-smoke-'));
 const tempBrainDir = fs.mkdtempSync(path.join(os.tmpdir(), 'orbit-smoke-brain-'));
+let client;
 
 try {
   // 1. Unzip to temp folder
@@ -46,15 +47,13 @@ try {
   const serverPath = path.join(tempDir, 'extension', 'out', 'mcp-server', 'index.js');
 
   if (!fs.existsSync(serverPath)) {
-    console.error(`[smoke-vsix] FAILED: Server entrypoint not found at ${serverPath}`);
-    process.exit(1);
+    throw new Error(`Server entrypoint not found at ${serverPath}`);
   }
 
   // Confirm NO node_modules exists in the unzipped extension
   const nodeModulesPath = path.join(tempDir, 'extension', 'node_modules');
   if (fs.existsSync(nodeModulesPath)) {
-    console.error('[smoke-vsix] FAILED: node_modules found in extension package (should be bundled)');
-    process.exit(1);
+    throw new Error('node_modules found in extension package (should be bundled)');
   }
 
   console.log('[smoke-vsix] Starting bundled MCP server via stdio transport...');
@@ -70,7 +69,7 @@ try {
     },
   });
 
-  const client = new Client({ name: 'smoke-client', version: '1.0.0' }, { capabilities: {} });
+  client = new Client({ name: 'smoke-client', version: '1.0.0' }, { capabilities: {} });
   await client.connect(transport);
 
   console.log('[smoke-vsix] Calling tools/list...');
@@ -82,17 +81,22 @@ try {
   const expectedTools = ['orbit_planner', 'write_impact_report', 'orbit_memory'];
   for (const expected of expectedTools) {
     if (!toolNames.includes(expected)) {
-      console.error(`[smoke-vsix] FAILED: Expected tool '${expected}' missing from server`);
-      process.exit(1);
+      throw new Error(`Expected tool '${expected}' missing from server`);
     }
   }
 
-  await client.close();
-  console.log('[smoke-vsix] Smoke test PASSED: Bundled server functions with zero external dependencies!');
 } catch (error) {
   console.error('[smoke-vsix] Smoke test FAILED:', error);
-  process.exit(1);
+  process.exitCode = 1;
 } finally {
-  fs.rmSync(tempDir, { recursive: true, force: true });
-  fs.rmSync(tempBrainDir, { recursive: true, force: true });
+  try {
+    await client?.close();
+  } finally {
+    await fs.promises.rm(tempDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    await fs.promises.rm(tempBrainDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+}
+
+if (!process.exitCode) {
+  console.log('[smoke-vsix] Smoke test PASSED: Bundled server functions with zero external dependencies!');
 }

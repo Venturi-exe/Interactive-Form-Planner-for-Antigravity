@@ -114,5 +114,5 @@ try {
 
   console.log('[check-vsix] All VSIX checks passed successfully!');
 } finally {
-  fs.rmSync(tempDir, { recursive: true, force: true });
+  await fs.promises.rm(tempDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }
