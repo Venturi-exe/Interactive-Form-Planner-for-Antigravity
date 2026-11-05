@@ -93,13 +93,7 @@ export function resolveInside(rootDir: string, relPath: string): string {
   }
 
   // V-07: Symlink containment check using canonical realpath
-  let realRoot = path.resolve(rootDir);
-  try {
-    if (fs.existsSync(realRoot)) {
-      realRoot = fs.realpathSync(realRoot);
-    }
-  } catch { /* ignore */ }
-
+  const realRoot = getCanonicalTarget(path.resolve(rootDir));
   const canonicalTarget = getCanonicalTarget(resolved);
   const realRelative = path.relative(realRoot, canonicalTarget);
 

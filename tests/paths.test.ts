@@ -65,6 +65,24 @@ describe('core/paths', () => {
         try { fs.rmSync(realTestDir, { recursive: true, force: true }); } catch { /* ignore */ }
       }
     });
+
+    it('resolves non-existent root directory inside a symlinked parent directory (macOS /var -> /private/var)', () => {
+      const realParent = fs.mkdtempSync(path.join(os.tmpdir(), 'orbit-real-parent-'));
+      const linkParentHost = fs.mkdtempSync(path.join(os.tmpdir(), 'orbit-link-host-'));
+      const symlinkedParent = path.join(linkParentHost, 'var-alias');
+      try {
+        fs.symlinkSync(realParent, symlinkedParent, 'junction');
+        const nonExistentRoot = path.join(symlinkedParent, 'orbit-nonexistent-root');
+        const res = resolveInside(nonExistentRoot, 'project/memories/INDEX.md');
+        expect(res).toBe(path.resolve(nonExistentRoot, 'project/memories/INDEX.md'));
+      } catch (err: unknown) {
+        if ((err as { code?: string }).code !== 'EPERM') throw err;
+      } finally {
+        try { fs.rmSync(symlinkedParent, { force: true }); } catch { /* ignore */ }
+        try { fs.rmSync(linkParentHost, { recursive: true, force: true }); } catch { /* ignore */ }
+        try { fs.rmSync(realParent, { recursive: true, force: true }); } catch { /* ignore */ }
+      }
+    });
   });
 
   describe('normalizeProjectKey (N-05)', () => {
